@@ -442,7 +442,7 @@ return $json.body.events
 // com Jev e Claude às cegas (a mesma rubrica dos scripts), aprovados entram como Vetted e disputas como Sourced.
 // Aprovados com algum caminho de contato vão para "Ready for outreach", o que dispara o W2.
 // A Clay entraria entre Vetted e Ready (enrich); no plano gratuito ela não aceita chamada do n8n, então o nó fica desligado.
-// Mercados (24/10): as semanas alternam entre Brasil e EUA, para o custo de uma rodada não dobrar.
+// Mercados (24/10): toda rodada cobre Brasil e EUA, com as 3 categorias mais finas de cada um (~1.400 unidades do YouTube).
 const BUSCAS_BR = {
   "Marketing & Design": ["marketing de produto", "branding para empresas", "copywriting", "UX writing", "design system", "design de interfaces", "marketing B2B", "social media para empresas", "marketing médico"],
   // Ângulo profissional (decisão do Michel, 23/10): "como estudar" e "notion organização" traziam 13 canais de estudante em 16 aprovados
@@ -530,7 +530,7 @@ const w3 = {
   nodes: [
     nota("About this workflow", [-520, -340], [
       "## Stage B · weekly supply",
-      `Runs every Monday. Finds the Passionfroot categories with the fewest approved creators in Attio, searches ${SUBSTACK_NO_N8N ? "YouTube and Substack" : "YouTube"} for new creators there, and vets each one twice, blind: **Jev** and **Claude** with the same rubric. Markets alternate every week: **Brazil**, then the **United States** (same rubric; the language gate and regional fit follow the market).`,
+      `Runs every Monday. Finds the Passionfroot categories with the fewest approved creators in Attio, searches ${SUBSTACK_NO_N8N ? "YouTube and Substack" : "YouTube"} for new creators there, and vets each one twice, blind: **Jev** and **Claude** with the same rubric. Every run covers both markets, **Brazil** and the **United States**, the three thinnest categories in each (same rubric; the language gate and regional fit follow the market).`,
       "",
       "- Both approve → **Vetted** in Attio",
       "- They disagree on a gate or by 2+ points on fit or quality → **Sourced**, verdict *Dispute*, for a human call",
@@ -556,12 +556,12 @@ const w3 = {
       name: "Every Monday", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: [0, LINHA_YT],
       parameters: { rule: { interval: [{ field: "weeks", weeksInterval: 1, triggerAtDay: [1], triggerAtHour: 9 }] } },
     },
-    codeFn("Categories", [220, LINHA_YT], w3Categorias, { CATEGORIES: Object.values(CATEGORIAS_EN), MARKETS, FORCE_MARKET: null }),
+    codeFn("Categories", [220, LINHA_YT], w3Categorias, { CATEGORIES: Object.values(CATEGORIAS_EN), MARKETS, RUN_MARKETS: Object.keys(MARKETS) }),
     http("Attio · approved per category", [440, LINHA_YT], {
       method: "POST", url: "https://api.attio.com/v2/objects/people/records/query", credencial: "Attio",
       body: "={{ JSON.stringify($json.query) }}",
     }),
-    codeFn("Plan searches", [660, LINHA_YT], w3Plano, { BUSCAS: BUSCAS_W3, MARKETS, ...W3 }),
+    codeFn("Plan searches", [660, LINHA_YT], w3Plano, { BUSCAS: BUSCAS_W3, MARKETS, RUN_MARKETS: Object.keys(MARKETS), ...W3 }),
     codeFn("YouTube searches", [880, LINHA_YT], w3BuscasYt),
     http("YouTube · search", [1100, LINHA_YT], {
       url: "https://www.googleapis.com/youtube/v3/search", credencial: "YouTube", continuar: true,
@@ -576,7 +576,7 @@ const w3 = {
       url: "https://www.googleapis.com/youtube/v3/channels", credencial: "YouTube", continuar: true,
       query: [{ name: "part", value: "snippet,statistics,contentDetails" }, { name: "id", value: "={{ $json.ids }}" }],
     }),
-    codeFn("Cheap filter", [1760, LINHA_YT], w3FiltroBarato, { MIN_SUBS: W3.MIN_SUBS, MAX_SUBS: W3.MAX_SUBS, MAX_YT: W3.MAX_YT }),
+    codeFn("Cheap filter", [1760, LINHA_YT], w3FiltroBarato, { MIN_SUBS: W3.MIN_SUBS, MAX_SUBS: W3.MAX_SUBS, MAX_YT: W3.MAX_YT, MARKETS }),
     http("YouTube · last uploads", [1980, LINHA_YT], {
       url: "https://www.googleapis.com/youtube/v3/playlistItems", credencial: "YouTube", continuar: true,
       query: [{ name: "part", value: "snippet,contentDetails" }, { name: "maxResults", value: "10" }, { name: "playlistId", value: "={{ $json.uploads }}" }],
@@ -603,7 +603,7 @@ const w3 = {
       query: [{ name: "sort", value: "new" }, { name: "limit", value: "10" }],
     }),
     ]),
-    codeFn("All new creators", [0, LINHA_VET], w3TodosNovos, { JEV_Q, CLAUDE_SYS, CLAUDE_SCHEMA }, [notaEngajamentoNewsletter, notaConsistencia]),
+    codeFn("All new creators", [0, LINHA_VET], w3TodosNovos, { JEV_Q, CLAUDE_SYS, CLAUDE_SCHEMA, MARKET_NAMES: Object.fromEntries(Object.entries(MARKETS).map(([k, m]) => [k, m.name])) }, [notaEngajamentoNewsletter, notaConsistencia]),
     http("Jev · rubric", [220, LINHA_VET], {
       method: "POST", url: JEV_URL, credencial: "Jev", body: "={{ JSON.stringify($json.jev_request) }}", lote: 5, continuar: true, repetir: true,
     }),
@@ -663,33 +663,26 @@ const w3 = {
 
 // Funções dos nós de código do W3
 function w3Categorias() {
-  // Markets alternate every week (Brazil, then the United States), so a run costs the same as before.
-  // Set FORCE_MARKET to "BR" or "US" to run a specific market by hand.
-  const week = Math.floor(Date.now() / (7 * 864e5));
-  const market = FORCE_MARKET || (week % 2 === 0 ? "BR" : "US");
-  // One Attio query per Passionfroot category, to count approved creators in this market
-  return CATEGORIES.map((category) => ({ json: { category, market, query: { limit: 500,
-    filter: { verdict: "Approved", passionfroot_category: category, market: MARKETS[market].name } } } }));
+  // Every run covers both markets, Brazil and the United States (edit RUN_MARKETS to run only one)
+  // One Attio query per market and Passionfroot category, to count approved creators
+  return RUN_MARKETS.flatMap((market) => CATEGORIES.map((category) => ({ json: { category, market, query: { limit: 500,
+    filter: { verdict: "Approved", passionfroot_category: category, market: MARKETS[market].name } } } })));
 }
 
 function w3Plano() {
-  // Thinnest categories first; searches rotate every week so each run looks somewhere new
+  // In each market, thinnest categories first; searches rotate every week so each run looks somewhere new
   const cats = $("Categories").all();
-  const market = cats[0].json.market;
-  const m = MARKETS[market];
-  const thin = $input.all()
-    .map((it, i) => ({ category: cats[i].json.category, approved: it.json.data?.length ?? 0 }))
-    .sort((a, b) => a.approved - b.approved)
-    .slice(0, CATEGORIES_PER_RUN);
+  const counts = $input.all().map((it, i) => ({ market: cats[i].json.market, category: cats[i].json.category, approved: it.json.data?.length ?? 0 }));
   const week = Math.floor(Date.now() / (7 * 864e5));
   const pick = (list, n, offset) => Array.from({ length: Math.min(n, list.length) }, (_, k) => list[(week * n + k + offset) % list.length]);
   const publishedAfter = new Date(Date.now() - 90 * 864e5).toISOString();
+  const thin = RUN_MARKETS.flatMap((market) => counts.filter((c) => c.market === market)
+    .sort((a, b) => a.approved - b.approved).slice(0, CATEGORIES_PER_RUN));
   return [{ json: {
-    market, market_name: m.name, country: m.country,
     thin,
-    youtube: thin.flatMap((t) => pick(BUSCAS[market][t.category], YT_PER_CATEGORY, 0).map((q) => ({ q, category: t.category, publishedAfter,
-      regionCode: m.regionCode, relevanceLanguage: m.relevanceLanguage }))),
-    substack: thin.flatMap((t) => pick(BUSCAS[market][t.category], NL_PER_CATEGORY, YT_PER_CATEGORY).map((q) => ({ q, category: t.category }))),
+    youtube: thin.flatMap((t) => pick(BUSCAS[t.market][t.category], YT_PER_CATEGORY, 0).map((q) => ({ q, category: t.category, market: t.market, publishedAfter,
+      regionCode: MARKETS[t.market].regionCode, relevanceLanguage: MARKETS[t.market].relevanceLanguage }))),
+    substack: thin.flatMap((t) => pick(BUSCAS[t.market][t.category], NL_PER_CATEGORY, YT_PER_CATEGORY).map((q) => ({ q, category: t.category, market: t.market }))),
   } }];
 }
 
@@ -714,8 +707,8 @@ function w3NovosCanais() {
     for (const v of it.json.items ?? []) {
       const id = v.snippet?.channelId;
       if (!id || seen.has(id)) continue;
-      const h = (hits[id] = hits[id] ?? { queries: [], categories: [] });
       const s = searches[i].json;
+      const h = (hits[id] = hits[id] ?? { queries: [], categories: [], market: s.market });
       if (!h.queries.includes(s.q)) { h.queries.push(s.q); h.categories.push(s.category); }
     }
   });
@@ -728,21 +721,21 @@ function w3NovosCanais() {
 function w3FiltroBarato() {
   // Cheap filter before spending more quota: country, size and "cortes" (clip) channels
   const memory = $getWorkflowStaticData("global");
-  const country = $("Plan searches").first().json.country;
   const seen = new Set(memory.seenChannels ?? []);
   const hits = $("New channels").first().json.hits ?? {};
   const kept = [];
   for (const it of $input.all()) {
     for (const c of it.json.items ?? []) {
       const subs = Number(c.statistics?.subscriberCount ?? 0);
-      const ok = (!c.snippet?.country || c.snippet.country === country) && !c.statistics?.hiddenSubscriberCount
+      const market = hits[c.id]?.market ?? "BR";
+      const ok = (!c.snippet?.country || c.snippet.country === MARKETS[market].country) && !c.statistics?.hiddenSubscriberCount
         && subs >= MIN_SUBS && subs <= MAX_SUBS && !/\bcortes?\b/i.test(c.snippet?.title ?? "");
       if (!ok) { seen.add(c.id); continue; }
       kept.push({
         id: c.id, title: c.snippet.title, description: c.snippet.description ?? "", subscribers: subs,
         link: c.snippet.customUrl ? "https://www.youtube.com/" + c.snippet.customUrl : "https://www.youtube.com/channel/" + c.id,
         uploads: c.contentDetails?.relatedPlaylists?.uploads,
-        queries: hits[c.id]?.queries ?? [], categories: hits[c.id]?.categories ?? [],
+        queries: hits[c.id]?.queries ?? [], categories: hits[c.id]?.categories ?? [], market,
       });
     }
   }
@@ -781,6 +774,7 @@ function w3CandidatosYt() {
     const business = /[\w.+-]+@[\w-]+\.[\w.]+|parceria|publi|contato comercial|business|sponsor|partnership|m[ií]dia ?kit|media ?kit/i.test(desc);
     out.push({ json: {
       platform: "YouTube",
+      market: c.market,
       creator_id: "yt:" + c.id,
       name: c.title,
       link: c.link,
@@ -808,10 +802,9 @@ function w3BuscasNl() {
 }
 
 function w3NovasPubs() {
-  // Publications in this week's market language, minus everyone vetted before.
+  // Publications in the language of the search's market, minus everyone vetted before.
   // Substack only fills in the language when it is not English, so an empty one counts as English.
-  const market = $("Plan searches").first().json.market;
-  const inMarket = (lang) => (market === "BR" ? /^pt/.test(lang ?? "") : !lang || /^en/.test(lang));
+  const inMarket = (lang, market) => (market === "BR" ? /^pt/.test(lang ?? "") : !lang || /^en/.test(lang));
   const memory = $getWorkflowStaticData("global");
   const seen = new Set([...SEEN_PUBS, ...(memory.seenPubs ?? [])]);
   for (const it of $("Attio · approved per category").all()) {
@@ -836,11 +829,12 @@ function w3NovasPubs() {
       for (const { pub, handle } of found) {
         if (!pub?.subdomain) continue;
         diag.publications_found++;
-        if (!inMarket(pub.language)) continue;
+        const market = searches[i]?.json?.market ?? "BR";
+        if (!inMarket(pub.language, market)) continue;
         diag.in_market_language++;
         if (seen.has(pub.subdomain)) continue;
         const p = (pubs[pub.subdomain] = pubs[pub.subdomain] ?? {
-          sub: pub.subdomain, handle, name: pub.name, queries: [],
+          sub: pub.subdomain, handle, name: pub.name, queries: [], market,
           base: pub.custom_domain ? "https://" + pub.custom_domain : "https://" + pub.subdomain + ".substack.com",
         });
         const q = searches[i]?.json?.q;
@@ -897,6 +891,7 @@ function w3TodosNovos() {
     const reactions = ps.reduce((s, x) => s + (x.reaction_count ?? 0), 0) / ps.length;
     newsletters.push({
       platform: "Newsletter",
+      market: p.market,
       creator_id: "nl:" + p.sub,
       name: p.name,
       person: p.author,
@@ -918,15 +913,14 @@ function w3TodosNovos() {
   });
   // A week with no new creators still goes on (one placeholder item) so the run ends with a summary
   if (!youtube.length && !newsletters.length) return [{ json: { nothing_to_vet: true } }];
-  const plan = $("Plan searches").first().json;
-  return [...youtube, ...newsletters].map((c) => ({ json: { ...c, market: plan.market_name,
-    jev_request: clean({ state: c.state, model: "jev-latest", questions: JEV_Q[plan.market][c.platform] }),
+  return [...youtube, ...newsletters].map((c) => ({ json: { ...c, market_name: MARKET_NAMES[c.market],
+    jev_request: clean({ state: c.state, model: "jev-latest", questions: JEV_Q[c.market][c.platform] }),
     claude_request: clean({
       model: "claude-opus-5-5",
       max_tokens: 4000,
       fallbacks: "default",
       output_config: { effort: "low", format: { type: "json_schema", schema: CLAUDE_SCHEMA } },
-      system: CLAUDE_SYS[plan.market][c.platform],
+      system: CLAUDE_SYS[c.market][c.platform],
       messages: [{ role: "user", content: "Creator data (JSON):\n" + JSON.stringify(c.state) }],
     }),
   } }));
@@ -986,7 +980,7 @@ function w3Comparar() {
     const verdict = dispute ? "Dispute" : approved ? "Approved" : "Rejected";
     stats.evaluated++;
     stats[{ Dispute: "disputes", Approved: "approved", Rejected: "rejected" }[verdict]]++;
-    stats.results.push({ name: cand.name, platform: cand.platform, market: cand.market, verdict, jev: jev.nota, claude: claude.nota,
+    stats.results.push({ name: cand.name, platform: cand.platform, market: cand.market_name, verdict, jev: jev.nota, claude: claude.nota,
       fit: "Jev " + jev.notas.fit_passionfroot + " / Claude " + claude.notas.fit_passionfroot, gate_30_days: cand.gate30d,
       why: dispute ? reasons.join("; ") : c.rationale });
     if (verdict === "Rejected") return;
@@ -998,7 +992,7 @@ function w3Comparar() {
         description: cand.platform === "Newsletter" ? cand.name : null,
         creator_id: cand.creator_id,
         platform: cand.platform,
-        market: cand.market,
+        market: cand.market_name,
         main_link: cand.link,
         passionfroot_category: CATEGORIAS_EN[c.categoria] ?? null,
         audience: cand.audience,
@@ -1061,7 +1055,6 @@ function w3Resumo() {
   const s = $("Compare Jev × Claude").first().json.stats;
   const plan = $("Plan searches").first().json;
   return [{ json: {
-    market: plan.market_name,
     thinnest_categories: plan.thin,
     youtube_searches: plan.youtube.map((x) => x.q),
     substack_searches: SUBSTACK ? plan.substack.map((x) => x.q) : "not run in n8n: Substack blocks cloud servers, newsletters run from the local scripts",

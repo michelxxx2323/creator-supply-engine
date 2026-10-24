@@ -20,7 +20,7 @@ flowchart LR
 ```
 
 - **Stage A, brief → shortlist (workflow 1):** a brand brief comes in, Apollo enriches the company, Claude extracts the criteria, and Claude and Jev score up to 400 approved creators against the brief, blind. The shortlist fills the budget minus 10% and lands in Attio as a deal with its rationale.
-- **Stage B, weekly supply (workflow 3):** every Monday, alternating Brazil and the US, it counts approved creators per category in Attio, searches YouTube and Substack in that market's three thinnest categories, and vets every new creator twice. Agreements go to Vetted; splits become an Attio task for a human.
+- **Stage B, weekly supply (workflow 3):** every Monday, for both Brazil and the US, it counts approved creators per category in Attio, searches YouTube and Substack in each market's three thinnest categories, and vets every new creator twice. Agreements go to Vetted; splits become an Attio task for a human.
 - **Stage B, outreach (workflow 2):** when a creator reaches "Ready for outreach", Apollo gets the contact and the template sequence for their platform. Demo only: never activated.
 
 ## Vetting
