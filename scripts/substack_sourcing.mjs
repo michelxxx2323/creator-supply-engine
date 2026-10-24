@@ -1,10 +1,13 @@
-// Sourcing de newsletters B2B brasileiras no Substack, pela busca pública do próprio Substack.
+// Sourcing de newsletters B2B no Substack (BR ou US, pelo nome do lote: us1 = EUA), pela busca pública do próprio Substack.
 // Uso: node scripts/substack_sourcing.mjs <nome-do-lote>
 // Variável opcional: MIN_ASSINANTES (padrão 1000).
 // Saída: data/newsletters_<lote>.csv e data/newsletters_<lote>_states.json (estado para o Jev, como no YouTube).
 // O beehiiv não tem busca pública; newsletters de lá entram à mão, a partir de listas.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { MERCADO } from "./rubric.mjs";
+// O Substack só preenche o idioma quando a publicação escolhe um diferente do inglês: nos EUA, vazio conta como inglês
+const IDIOMA = { BR: (l) => /^pt/.test(l ?? ""), US: (l) => !l || /^en/.test(l) }[MERCADO];
 
 const lote = process.argv[2];
 if (!lote) {
@@ -44,6 +47,16 @@ const BUSCAS_POR_LOTE = {
     "Saúde": ["healthtech", "saúde digital", "gestão em saúde"],
     "Outro": ["direito digital", "agronegócio", "construção civil gestão"],
   },
+  // EUA, lote 1 (24/10): os mesmos nichos B2B da galeria, em inglês
+  us1: {
+    "Marketing & Design": ["B2B marketing", "product marketing", "demand generation", "brand strategy", "copywriting", "product design", "UX research"],
+    "Tech & Negócios": ["SaaS", "product management", "startups", "founders", "sales leadership", "customer success", "RevOps", "data engineering", "engineering leadership"],
+    "IA": ["AI for business", "AI agents", "applied AI"],
+    "Finanças & Investimentos": ["FP&A", "CFO", "corporate finance", "fintech"],
+    "Carreira": ["tech careers", "leadership", "people operations", "recruiting"],
+    "Saúde": ["healthtech", "digital health", "healthcare operations"],
+    "Produtividade & Desenvolvimento pessoal": ["productivity at work", "remote work"],
+  },
 };
 export const BUSCAS = BUSCAS_POR_LOTE[lote] ?? BUSCAS_POR_LOTE.lote2;
 
@@ -51,7 +64,9 @@ const UA = { "User-Agent": "Mozilla/5.0" };
 const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
 async function get(url) {
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await fetch(url, { headers: UA });
+    // Erro de rede (TLS recusado, conexão caída) conta como tentativa falha, não derruba o lote
+    const res = await fetch(url, { headers: UA }).catch(() => null);
+    if (!res) { await pausa(3000 * tentativa); continue; }
     if (res.ok) return res.json();
     if (res.status !== 429 && res.status < 500) return null;
     await pausa(3000 * tentativa);
@@ -83,7 +98,7 @@ for (const [nicho, consultas] of Object.entries(BUSCAS)) {
         ? item.results.map((r) => ({ pub: r.primaryPublication, handle: r.handle }))
         : (item.context?.users ?? []).map((u) => ({ pub: u.primary_publication, handle: u.handle }));
       for (const { pub, handle } of achados) {
-        if (!pub?.subdomain || !/^pt/.test(pub.language ?? "")) continue;
+        if (!pub?.subdomain || !IDIOMA(pub.language)) continue;
         const atual = pubs.get(pub.subdomain) ?? { pub, handle, consultas: new Set(), nichos: new Set() };
         atual.consultas.add(q);
         atual.nichos.add(nicho);
@@ -93,7 +108,7 @@ for (const [nicho, consultas] of Object.entries(BUSCAS)) {
     await pausa(400);
   }
 }
-console.error(`publicações em português encontradas: ${pubs.size}`);
+console.error(`publicações no idioma do mercado (${MERCADO}) encontradas: ${pubs.size}`);
 
 const linhas = [];
 const states = {};

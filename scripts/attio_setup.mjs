@@ -12,6 +12,7 @@ const PEOPLE = [
   // O Attio não aceita atributo único em People neste plano; o attio_sync.mjs deduplica pelo creator_id
   { api_slug: "creator_id", title: "Creator ID", type: "text", description: "yt:<channel>, li:<profile> or nl:<publication>" },
   { api_slug: "platform", title: "Platform", type: "select", options: ["YouTube", "LinkedIn", "Newsletter"] },
+  { api_slug: "market", title: "Market", type: "select", options: ["Brazil", "United States"] },
   { api_slug: "main_link", title: "Main link", type: "text" },
   { api_slug: "passionfroot_category", title: "Passionfroot category", type: "select", options: Object.values(CATEGORIAS_EN) },
   { api_slug: "audience", title: "Audience", type: "number", description: "Subscribers, followers or newsletter subscribers" },

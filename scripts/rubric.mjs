@@ -3,9 +3,54 @@
 // Rubrica da Passionfroot (Etapa 2, 22/10/2026): mede se uma marca pagaria para falar com o público,
 // em qualquer nicho que a Passionfroot vende. A rubrica de tech da Etapa 1 está em data/rubrica_tech/.
 
+// Mercados do supply (24/10): Brasil e Estados Unidos. Muda só o portão de idioma, o fit regional e a busca;
+// fit com a Passionfroot, qualidade, pesos e corte são os mesmos. Os scripts dos lotes leem MERCADO do ambiente
+// (BR por padrão); o W3 usa rubricaDoMercado para os dois. A chave pt_br é o portão de idioma (nome histórico).
+export const MERCADOS = {
+  BR: {
+    nome: "Brazil",
+    idioma: {
+      youtube: "O conteúdo do canal é produzido em português do Brasil",
+      newsletter: "As edições são escritas em português do Brasil",
+      linkedin: "Os posts da pessoa são escritos em português do Brasil",
+    },
+    linkedin_mercado: "A pessoa atua no mercado de trabalho brasileiro e fala com um público do Brasil",
+    regional: [
+      "Outro idioma ou outro país",
+      "Português, mas voltado a Portugal ou a outro mercado",
+      "Português do Brasil, com temas genéricos e sem referência ao Brasil",
+      "Português do Brasil, com exemplos e situações do dia a dia brasileiro",
+      "Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local",
+    ],
+    youtube: { regionCode: "BR", relevanceLanguage: "pt" },
+  },
+  US: {
+    nome: "United States",
+    idioma: {
+      youtube: "O conteúdo do canal é produzido em inglês e fala com um público dos Estados Unidos",
+      newsletter: "As edições são escritas em inglês e falam com um público dos Estados Unidos",
+      linkedin: "Os posts da pessoa são escritos em inglês e falam com um público dos Estados Unidos",
+    },
+    linkedin_mercado: "A pessoa atua no mercado de trabalho americano e fala com um público dos Estados Unidos",
+    regional: [
+      "Outro idioma",
+      "Inglês, mas voltado a outro país, como Reino Unido, Índia ou Austrália",
+      "Inglês, com temas genéricos e sem referência a um país",
+      "Inglês, com exemplos e situações do dia a dia americano",
+      "Voltado ao público americano, com casos, empresas, profissões, produtos ou regras dos EUA, como 401(k), IRS, impostos ou o mercado de trabalho local",
+    ],
+    youtube: { regionCode: "US", relevanceLanguage: "en" },
+  },
+};
+// Lote cujo nome começa com "us" é americano (ex.: us1); MERCADO no ambiente tem prioridade
+export const mercadoDoLote = (lote) => (/^us/i.test(lote ?? "") ? "US" : "BR");
+export const MERCADO = process.env.MERCADO ?? mercadoDoLote(process.argv[2]);
+if (!MERCADOS[MERCADO]) throw new Error(`MERCADO desconhecido: ${MERCADO} (use BR ou US)`);
+const MERC = MERCADOS[MERCADO];
+
 // Portões: precisam ser verdadeiros
 export const GATES = {
-  pt_br: "O conteúdo do canal é produzido em português do Brasil",
+  pt_br: MERC.idioma.youtube,
   e_creator:
     "O canal pertence a uma pessoa ou dupla que cria o próprio conteúdo, e não a uma empresa, escola, veículo de imprensa ou instituição",
 };
@@ -67,13 +112,7 @@ export const CRITERIA = {
   fit_regional: {
     peso: 10,
     instructions: "Para qual mercado o conteúdo é feito",
-    levels: [
-      "Outro idioma ou outro país",
-      "Português, mas voltado a Portugal ou a outro mercado",
-      "Português do Brasil, com temas genéricos e sem referência ao Brasil",
-      "Português do Brasil, com exemplos e situações do dia a dia brasileiro",
-      "Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local",
-    ],
+    levels: MERC.regional,
   },
 };
 
@@ -130,7 +169,7 @@ export const BRIEF_FLAGS = {
 // dos posts. Decide quem tem os posts lidos; o vetting completo usa os posts.
 export const LINKEDIN_TRIAGEM = {
   gates: {
-    mercado_br: "A pessoa atua no mercado de trabalho brasileiro e fala com um público do Brasil",
+    mercado_br: MERC.linkedin_mercado, // portão de mercado (nome histórico)
     e_creator:
       "A pessoa publica conteúdo próprio com frequência, como creator, Top Voice, newsletter, podcast ou canal, e não é apenas um executivo ou recrutador com muitos seguidores",
   },
@@ -170,7 +209,7 @@ export const LINKEDIN_CRITERIA = {
 // Vetting das newsletters (Substack): edição não é vídeo nem post, então muda o texto dos critérios
 export const NEWSLETTER = {
   gates: {
-    pt_br: "As edições são escritas em português do Brasil",
+    pt_br: MERC.idioma.newsletter,
     e_creator:
       "A newsletter é escrita por uma pessoa ou dupla com voz própria, e não por uma empresa, escola, veículo de imprensa ou instituição",
   },

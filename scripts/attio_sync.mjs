@@ -5,7 +5,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { attio } from "./attio_api.mjs";
-import { CATEGORIAS_EN } from "./rubric.mjs";
+import { CATEGORIAS_EN, MERCADOS, mercadoDoLote } from "./rubric.mjs";
 
 const dataDir = new URL("../data/", import.meta.url);
 const read = (f) => readFileSync(new URL(f, dataDir), "utf8");
@@ -51,17 +51,19 @@ function resumo(c) {
 
 const creators = [];
 const arquivos = readdirSync(dataDir);
-for (const f of arquivos.filter((f) => /^vetting_final_lote\d+\.csv$/.test(f))) {
+// Lotes loteN são do Brasil; usN, dos EUA
+const LOTE = /(lote|us)\d+/;
+for (const f of arquivos.filter((f) => /^vetting_final_(lote|us)\d+\.csv$/.test(f))) {
   for (const r of parseCsv(read(f))) creators.push({ ...r, plataforma: "YouTube", id: `yt:${r.channel_id}`, link: r.link,
-    audiencia: Number(r.inscritos), preco: precoTabela(Number(r.inscritos)), lote: f.match(/lote\d+/)[0] });
+    audiencia: Number(r.inscritos), preco: precoTabela(Number(r.inscritos)), lote: f.match(LOTE)[0] });
 }
 for (const f of arquivos.filter((f) => /^vetting_final_linkedin_.+\.csv$/.test(f))) {
   for (const r of parseCsv(read(f))) creators.push({ ...r, plataforma: "LinkedIn", id: `li:${r.linkedin}`, link: r.linkedin,
-    audiencia: Number(r.seguidores), lote: `linkedin_${f.match(/lote\d+/)[0]}` });
+    audiencia: Number(r.seguidores), lote: `linkedin_${f.match(LOTE)[0]}` });
 }
 for (const f of arquivos.filter((f) => /^vetting_final_newsletters_.+\.csv$/.test(f))) {
   for (const r of parseCsv(read(f))) creators.push({ ...r, plataforma: "Newsletter", id: `nl:${r.pub_id}`, link: r.link,
-    audiencia: Number(r.assinantes) || null, lote: `newsletters_${f.match(/lote\d+/)[0]}`, nomePessoa: r.autor });
+    audiencia: Number(r.assinantes) || null, lote: `newsletters_${f.match(LOTE)[0]}`, nomePessoa: r.autor });
 }
 const alvo = creators.filter((c) => c.veredito === "Aprovado" || c.veredito.startsWith("Disputa")).slice(0, Number(process.env.LIMITE) || undefined);
 
@@ -91,6 +93,7 @@ function valores(c) {
     description: c.plataforma === "Newsletter" ? c.nome : null,
     creator_id: c.id,
     platform: c.plataforma,
+    market: MERCADOS[mercadoDoLote(c.lote.replace(/^(linkedin|newsletters)_/, ""))].nome,
     main_link: c.link,
     ...(c.plataforma === "LinkedIn" ? { linkedin: c.link } : {}),
     passionfroot_category: CATEGORIAS_EN[c.categoria] ?? null,

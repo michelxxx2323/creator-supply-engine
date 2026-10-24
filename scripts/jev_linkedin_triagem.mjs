@@ -73,7 +73,7 @@ writeFileSync(outFile, JSON.stringify(results, null, 1));
 
 const linhas = Object.entries(results).filter(([, r]) => !r.erro).map(([url, r]) => {
   const motivos = [];
-  if (r.mercado_br < 0.5) motivos.push("fora do mercado BR");
+  if (r.mercado_br < 0.5) motivos.push("fora do mercado");
   if (r.e_creator < 0.5) motivos.push("não é creator");
   const flags = Object.entries(r.red_flags).filter(([, p]) => p >= 0.5).map(([k]) => k);
   if (flags.length) motivos.push(`red flag: ${flags.join(", ")}`);

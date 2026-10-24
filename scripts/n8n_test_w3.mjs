@@ -1,4 +1,4 @@
-// Uso: node scripts/n8n_test_w3.mjs  (YouTube e Claude simulados; Substack, Jev e Attio de verdade; apaga o que criar no Attio)
+// Uso: node scripts/n8n_test_w3.mjs  (MERCADO=US para o turno americano)  (YouTube e Claude simulados; Substack, Jev e Attio de verdade; apaga o que criar no Attio)
 // Executor local do W3: roda os nós na ordem das conexões, com o YouTube e o Claude simulados (sem gastar quota nem chave)
 // e Substack, Jev e Attio de verdade. No fim apaga tudo que criou no Attio.
 import { readFileSync } from "node:fs";
@@ -24,9 +24,9 @@ const hoje = new Date().toISOString();
 const ytFake = {
   search: () => ({ items: [{ snippet: { channelId: "UCteste_w3_1" } }, { snippet: { channelId: "UCteste_w3_2" } }] }),
   channels: () => ({ items: [
-    { id: "UCteste_w3_1", snippet: { title: exemplo.canal + " (TESTE W3)", description: exemplo.descricao_do_canal + " linkedin.com/in/teste-w3", country: "BR", customUrl: "@testew3" },
+    { id: "UCteste_w3_1", snippet: { title: exemplo.canal + " (TESTE W3)", description: exemplo.descricao_do_canal + " linkedin.com/in/teste-w3", country: process.env.MERCADO ?? "BR", customUrl: "@testew3" },
       statistics: { subscriberCount: "42000" }, contentDetails: { relatedPlaylists: { uploads: "UUteste1" } } },
-    { id: "UCteste_w3_2", snippet: { title: "Canal pequeno demais", description: "", country: "BR" }, statistics: { subscriberCount: "300" }, contentDetails: { relatedPlaylists: { uploads: "UUteste2" } } },
+    { id: "UCteste_w3_2", snippet: { title: "Canal pequeno demais", description: "", country: process.env.MERCADO ?? "BR" }, statistics: { subscriberCount: "300" }, contentDetails: { relatedPlaylists: { uploads: "UUteste2" } } },
   ] }),
   playlistItems: () => ({ items: exemplo.ultimos_videos.map((v, i) => ({ snippet: { title: v.titulo, description: v.descricao },
     contentDetails: { videoId: "vid" + i, videoPublishedAt: new Date(Date.now() - i * 3 * 864e5).toISOString() } })) }),
@@ -37,7 +37,7 @@ const ytFake = {
 let nClaude = 0;
 const claudeFake = () => {
   const k = nClaude++;
-  const r = { pt_br: true, e_creator: k !== 1, red_flags: [], fit_passionfroot: k >= 2 ? 1 : 4, qualidade: 4, prontidao_publi: 3, fit_regional: 4,
+  const r = { language_gate: true, e_creator: k !== 1, red_flags: [], fit_passionfroot: k >= 2 ? 1 : 4, qualidade: 4, prontidao_publi: 3, fit_regional: 4,
     categoria: "Tech & Negócios", rationale: "Simulated Claude answer for the local test." };
   return { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(r) }] };
 };
@@ -90,6 +90,8 @@ async function httpNode(nome, itens) {
 
 function codeNode(nome, itens) {
   let js = node(nome).parameters.jsCode;
+  // MERCADO=US força o turno americano (o W3 alterna os mercados por semana)
+  if (process.env.MERCADO) js = js.split("const FORCE_MARKET = null;").join(`const FORCE_MARKET = "${process.env.MERCADO}";`);
   if (nome === "New publications") js = js.replace("const MAX_NL = 15;", "const MAX_NL = 2;"); // teste barato: 2 newsletters
   if (nome === "Subscriber filter") js = js.replace("const MAX_NL = 15;", "const MAX_NL = 2;");
   const $ = (n) => ({ all: () => out[n] ?? [], first: () => (out[n] ?? [])[0] });

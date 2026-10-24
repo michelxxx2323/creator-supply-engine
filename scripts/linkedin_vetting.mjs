@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import {
   LINKEDIN_TRIAGEM, LINKEDIN_CRITERIA, OBJECTIVE, PESADOS, APROVACAO_MINIMA, FIT_MINIMO,
   notaEngajamentoLinkedin, notaConsistenciaLinkedin, perguntasJev, aplicarDecisao, soDiferencaDeNota, aprovaPelaMedia,
+  MERCADO, MERCADOS,
 } from "./rubric.mjs";
 
 const env = readFileSync(new URL("../.env", import.meta.url), "utf8");
@@ -28,7 +29,7 @@ const claude = read(`vetting_claude_linkedin_${lote}.json`);
 let decisoes = {};
 try { decisoes = read(`decisoes_michel_linkedin_${lote}.json`).decisoes; } catch {}
 
-const GATES = { pt_br: "Os posts da pessoa são escritos em português do Brasil", e_creator: LINKEDIN_TRIAGEM.gates.e_creator };
+const GATES = { pt_br: MERCADOS[MERCADO].idioma.linkedin, e_creator: LINKEDIN_TRIAGEM.gates.e_creator };
 const RED_FLAGS = { apostas: "A pessoa promove apostas, cassinos ou jogos de azar", ...LINKEDIN_TRIAGEM.red_flags };
 const KEYS = Object.keys(LINKEDIN_CRITERIA);
 const questions = perguntasJev({ ...GATES, ...RED_FLAGS }, LINKEDIN_CRITERIA);

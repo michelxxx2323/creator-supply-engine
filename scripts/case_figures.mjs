@@ -103,7 +103,7 @@ const clayWf = {
 const regra = detalhe[ordem.find((n) => n.nodeType === "conditional")?.name]?.rulesConditionalConfig;
 const painelClay = `
     <div class="panel" role="tabpanel" id="p-tl-clay" aria-labelledby="t-tl-clay" hidden>
-      <div class="panel-note">${bi("span", `“${clay.summary.workflowName}”, read from Clay through its CLI. A CSV of LinkedIn URLs starts one run per row.`, `“${clay.summary.workflowName}”, lido da Clay pela CLI. Um CSV de URLs do LinkedIn dispara uma rodada por linha.`)}</div>
+      <div class="panel-note">${bi("span", `“${clay.summary.workflowName}”, read from Clay through its CLI. A CSV of LinkedIn URLs starts one run per row. It ran for Brazil. The US is the same workflow with the country rule set to United States, left out on the free plan: 100 search results a month, about 3.5 credits per profile once posts are read, and the Brazilian batch used half the search quota.`, `“${clay.summary.workflowName}”, lido da Clay pela CLI. Um CSV de URLs do LinkedIn dispara uma rodada por linha. Rodou para o Brasil. Os EUA são o mesmo workflow com a regra de país em Estados Unidos, deixados de fora no plano gratuito: 100 resultados de busca por mês, uns 3,5 créditos por perfil quando os posts são lidos, e o lote brasileiro usou metade da quota de busca.`)}</div>
       ${existsSync(PORTFOLIO + "creators-img/clay-workflow.png")
         ? print("clay-workflow.png", `${clay.summary.workflowName} in the Clay editor: ${ordem.map((n) => n.name).join(", ")}`, "Screenshot from the Clay editor (click to enlarge). Each run goes CSV → enrich → the Brazil, 5k+ filter → posts; the canvas just draws the filter last.", "Print do editor da Clay (clique para ampliar). Cada rodada vai do CSV ao enrich, ao filtro Brasil, 5 mil+, e aos posts; o canvas só desenha o filtro por último.")
         : canvas("clay", clayWf, `${clay.summary.workflowName}: ${ordem.map((n) => n.name).join(", then ")}`)}
@@ -184,6 +184,7 @@ const secao = `<!-- TOOLS:START (gerado por scripts/case_figures.mjs no projeto 
       <span class="eyebrow" data-en="Under the hood">Por dentro</span>
       <h2 class="display" data-en="In the&lt;br&gt;tools">Nas<br>ferramentas</h2>
       ${bi("p", `What each tool actually holds, drawn from the real configuration: the n8n workflow files, the Clay workflow read through its CLI, and the Apollo and Attio APIs. Snapshot from ${data}.`, `O que cada ferramenta tem de verdade, desenhado da configuração real: os arquivos dos workflows do n8n, o workflow da Clay lido pela CLI e as APIs do Apollo e do Attio. Retrato de ${dataPt}.`, ' class="serif"')}
+      <a class="jump" href="https://github.com/michelxxx2323/creator-supply-engine" target="_blank" rel="noopener" data-en="All the code on GitHub ↗">Todo o código no GitHub ↗</a>
     </div>
     <div class="tabs" role="tablist" aria-label="Ferramentas" data-en-label="Tools">
       ${abas.map(([id, nome], i) => `<button role="tab" id="t-tl-${id}" aria-controls="p-tl-${id}" aria-selected="${i === 0}">${nome}</button>`).join("\n      ")}
@@ -260,35 +261,49 @@ const CSS = `/* Seção "In the tools": canvas de workflow, quadro do Attio */
 @media (max-width:760px){.tl-grid{grid-template-columns:1fr}.tl-table th{white-space:normal}}
 /* /tools */`;
 
-// ---------- Mapa de gaps: aprovados por categoria (B2B x estudantes e início de carreira) ----------
-const gaps = snap.gaps;
-const maxGap = Math.max(...gaps.map((g) => g.approved));
-const fino = gaps.at(-1), largo = gaps[0];
-const prod = gaps.find((g) => g.category === "Productivity & Personal Development");
+// ---------- Mapa de gaps: aprovados por categoria e mercado (B2B x estudantes e início de carreira) ----------
+// Brasil e EUA na mesma escala e na mesma ordem de categorias (a do Brasil), para comparar os dois mercados
+const gapsBR = snap.gaps.Brazil, gapsUS = snap.gaps["United States"];
+const ordemCat = gapsBR.map((g) => g.category);
+const maxGap = Math.max(...gapsBR.map((g) => g.approved), ...gapsUS.map((g) => g.approved));
 const pct = (n) => ((100 * n) / maxGap).toFixed(2) + "%";
-const linhasGap = gaps.map((g) => {
+const total = (gs, k) => gs.reduce((t, g) => t + g[k], 0);
+const linhas = (gs, mercado) => ordemCat.map((cat) => {
+  const g = gs.find((x) => x.category === cat) ?? { category: cat, approved: 0, b2b: 0 };
   const outros = g.approved - g.b2b;
-  const seg = (n, cls, en) => (n ? `<span class="gp-seg ${cls}" style="width:${pct(n)}" tabindex="0" data-tip="${esc(`${g.category} · ${en}: ${n}`)}" aria-label="${esc(`${g.category}, ${en}: ${n}`)}"></span>` : "");
+  const seg = (n, cls, en) => (n ? `<span class="gp-seg ${cls}" style="width:${pct(n)}" tabindex="0" data-tip="${esc(`${mercado} · ${g.category} · ${en}: ${n}`)}" aria-label="${esc(`${mercado}, ${g.category}, ${en}: ${n}`)}"></span>` : "");
   return `<div class="gp-row" role="listitem"><span class="gp-label">${esc(g.category)}</span><div class="gp-track">${seg(g.b2b, "is-b2b", "B2B audience")}${seg(outros, "is-pro", "students and early career")}</div><span class="gp-val">${g.approved}</span></div>`;
-}).join("\n        ");
-const leituraEn = `Productivity has ${prod?.approved} approved creators, but only ${prod?.b2b} with a B2B audience. ${fino.category} has ${fino.approved}; ${largo.category}, ${largo.approved}. The weekly workflow searches the thinnest categories first.`;
-const leituraPt = `Produtividade tem ${prod?.approved} creators aprovados, mas só ${prod?.b2b} com público B2B. ${fino.category} tem ${fino.approved}; ${largo.category}, ${largo.approved}. O workflow semanal busca primeiro nas categorias mais finas.`;
+}).join("\n          ");
+const bloco = (gs, mercado, pt, nota) => `<div class="gp-market">
+        <h3 class="gp-title">${bi("span", `${mercado} · ${total(gs, "approved")} approved, ${total(gs, "b2b")} B2B`, `${pt} · ${total(gs, "approved")} aprovados, ${total(gs, "b2b")} B2B`)}</h3>
+        <div class="gp-rows" role="list" aria-label="Approved creators by category, ${mercado}">
+          ${linhas(gs, mercado)}
+        </div>
+        ${nota}
+      </div>`;
+const fino = gapsBR.at(-1), largo = gapsBR[0];
+const prod = gapsBR.find((g) => g.category === "Productivity & Personal Development");
+const usFinos = [...gapsUS].sort((a, b) => a.approved - b.approved).slice(0, 3).map((g) => g.category);
+const leituraEn = `Brazil: ${fino.category} has ${fino.approved} approved creators against ${largo.approved} in ${largo.category}, and Productivity has ${prod?.approved} but only ${prod?.b2b} with a B2B audience. United States: the first round, from ${snap.attio.creators_by_market["United States"]} creators sourced; ${usFinos.join(", ")} are the thinnest. The weekly workflow alternates markets and searches the thinnest categories first.`;
+const leituraPt = `Brasil: ${fino.category} tem ${fino.approved} creators aprovados contra ${largo.approved} em ${largo.category}, e Produtividade tem ${prod?.approved}, mas só ${prod?.b2b} com público B2B. EUA: a primeira rodada, de ${snap.attio.creators_by_market["United States"]} creators encontrados; ${usFinos.join(", ")} são as mais finas. O workflow semanal alterna os mercados e busca primeiro nas categorias mais finas.`;
+const tabela = (gs, mercado) => gs.map((g) => `<tr><td>${esc(mercado)}</td><td>${esc(g.category)}</td><td>${g.approved}</td><td>${g.b2b}</td><td>${g.approved - g.b2b}</td></tr>`).join("");
 const secaoGaps = `<!-- GAPS:START (gerado por scripts/case_figures.mjs no projeto Clay; não editar à mão) -->
   <section id="gaps">
     <div class="sec-head">
       <span class="eyebrow" data-en="Where supply is thin">Onde falta supply</span>
       <h2 class="display" data-en="The gap&lt;br&gt;map">O mapa<br>de gaps</h2>
-      ${bi("p", `Approved creators by Passionfroot category, live from Attio (${snap.attio.creators} creators in the pipeline). A B2B audience means a fit of 3.5 or more on the rubric.`, `Creators aprovados por categoria da Passionfroot, ao vivo do Attio (${snap.attio.creators} creators no pipeline). Público B2B quer dizer fit de 3,5 ou mais na rubrica.`, ' class="serif"')}
+      ${bi("p", `Approved creators by Passionfroot category and market, live from Attio (${snap.attio.creators} creators in the pipeline: ${snap.attio.creators_by_market.Brazil} in Brazil, ${snap.attio.creators_by_market["United States"]} in the US). A B2B audience means a fit of 3.5 or more on the rubric.`, `Creators aprovados por categoria da Passionfroot e por mercado, ao vivo do Attio (${snap.attio.creators} creators no pipeline: ${snap.attio.creators_by_market.Brazil} no Brasil, ${snap.attio.creators_by_market["United States"]} nos EUA). Público B2B quer dizer fit de 3,5 ou mais na rubrica.`, ' class="serif"')}
     </div>
     <figure class="gp">
       <div class="gp-legend"><span><i class="gp-sw is-b2b"></i>${bi("span", "B2B audience (fit ≥ 3.5)", "Público B2B (fit ≥ 3,5)")}</span><span><i class="gp-sw is-pro"></i>${bi("span", "Students and early career", "Estudantes e início de carreira")}</span></div>
-      <div class="gp-rows" role="list" aria-label="Approved creators by category">
-        ${linhasGap}
+      <div class="gp-markets">
+      ${bloco(gapsBR, "Brazil", "Brasil", "")}
+      ${bloco(gapsUS, "United States", "Estados Unidos", "")}
       </div>
       ${bi("figcaption", leituraEn, leituraPt)}
       <details class="gp-table"><summary data-en="Table view">Ver em tabela</summary>
-        <table class="tl-table"><tr><th>Category</th><th>Approved</th><th>B2B audience</th><th>Students and early career</th></tr>
-        ${gaps.map((g) => `<tr><td>${esc(g.category)}</td><td>${g.approved}</td><td>${g.b2b}</td><td>${g.approved - g.b2b}</td></tr>`).join("")}</table>
+        <table class="tl-table"><tr><th>Market</th><th>Category</th><th>Approved</th><th>B2B audience</th><th>Students and early career</th></tr>
+        ${tabela(gapsBR, "Brazil")}${tabela(gapsUS, "United States")}</table>
       </details>
     </figure>
   </section>
@@ -303,6 +318,8 @@ const CSS_GAPS = `/* Mapa de gaps (cores validadas com o validador de paleta, cl
 .gp-sw{width:12px;height:12px;border-radius:3px;display:inline-block}
 .gp-sw.is-b2b,.gp-seg.is-b2b{background:var(--gp-b2b)}
 .gp-sw.is-pro,.gp-seg.is-pro{background:var(--gp-pro)}
+.gp-markets{display:grid;gap:28px}
+.gp-title{margin:0 0 10px;font:600 .9rem var(--f-body);color:var(--fg)}
 .gp-rows{display:grid;gap:8px}
 .gp-row{display:grid;grid-template-columns:minmax(120px,15rem) 1fr 3rem;align-items:center;gap:12px}
 .gp-label{font-size:.86rem;color:var(--fg)}

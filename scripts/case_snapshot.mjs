@@ -68,11 +68,17 @@ const notaDeal = (await attio("GET", `notes?parent_object=deals&parent_record_id
 const tarefa = (await attio("GET", "tasks?limit=50")).data.find((t) => !t.is_completed && t.content_plaintext.startsWith("Decide:"));
 
 // Mapa de gaps: aprovados por categoria, separando público B2B (fit ≥ 3,5) de estudantes e início de carreira
+// Por mercado (24/10): Brasil e EUA, com todas as categorias (zero também aparece)
 const aprovados = pessoas.filter((p) => v(p, "verdict") === "Approved");
-const gaps = [...new Set(aprovados.map((p) => v(p, "passionfroot_category")).filter(Boolean))].map((category) => {
-  const da = aprovados.filter((p) => v(p, "passionfroot_category") === category);
-  return { category, approved: da.length, b2b: da.filter((p) => (v(p, "passionfroot_fit") ?? 0) >= 3.5).length };
-}).sort((a, b) => b.approved - a.approved);
+const categorias = [...new Set(aprovados.map((p) => v(p, "passionfroot_category")).filter(Boolean))];
+const gaps = Object.fromEntries(["Brazil", "United States"].map((mercado) => {
+  const doMercado = aprovados.filter((p) => (v(p, "market") ?? "Brazil") === mercado);
+  return [mercado, categorias.map((category) => {
+    const da = doMercado.filter((p) => v(p, "passionfroot_category") === category);
+    return { category, approved: da.length, b2b: da.filter((p) => (v(p, "passionfroot_fit") ?? 0) >= 3.5).length };
+  }).sort((a, b) => b.approved - a.approved)];
+}));
+const porMercado = Object.fromEntries(["Brazil", "United States"].map((m) => [m, pessoas.filter((p) => v(p, "creator_id") && (v(p, "market") ?? "Brazil") === m).length]));
 
 const snapshot = {
   taken_at: new Date().toISOString(),
@@ -80,6 +86,7 @@ const snapshot = {
   apollo: { sequences: sequencias, custom_fields: campos },
   attio: {
     creators: pessoas.filter((p) => v(p, "creator_id")).length,
+    creators_by_market: porMercado,
     pipeline,
     schema: { people: await schema("objects/people"), deals: await schema("objects/deals"), list: await schema("lists/supply_pipeline") },
     example_creator: { name: v(exemplo, "name"), values: Object.fromEntries(CAMPOS_EXEMPLO.map((k) => [k, v(exemplo, k)])) },

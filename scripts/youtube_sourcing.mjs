@@ -1,10 +1,11 @@
-// Sourcing de creators BR no YouTube: busca vídeos recentes em PT-BR por tema,
+// Sourcing de creators no YouTube (BR ou US, pelo nome do lote: us1 = EUA): busca vídeos recentes no idioma do mercado por tema,
 // agrupa por canal e coleta os sinais do scorecard. Sem dependências (Node 22+).
 //
 // Uso: node scripts/youtube_sourcing.mjs <nome-do-lote> "consulta 1" "consulta 2" ...
 // Custo de cota: 100 unidades por consulta + ~3 unidades a cada 50 canais.
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { MERCADO, MERCADOS } from "./rubric.mjs";
 
 const env = readFileSync(new URL("../.env", import.meta.url), "utf8");
 const KEY = env.match(/^YOUTUBE_API_KEY=(.+)$/m)?.[1].trim();
@@ -49,7 +50,7 @@ for (const q of queries) {
   for (let page = 0; page < PAGES; page++) {
     const res = await yt("search", {
       part: "snippet", type: "video", q, maxResults: 50,
-      regionCode: "BR", relevanceLanguage: "pt", publishedAfter,
+      ...MERCADOS[MERCADO].youtube, publishedAfter,
       ...(pageToken ? { pageToken } : {}),
     }, 100);
     for (const item of res.items) {

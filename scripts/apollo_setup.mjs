@@ -96,7 +96,7 @@ const resposta = (body_html) => email("", body_html, "reply_to_thread");
 const linkedin = (texto) => [{ type: "new_thread", status: "to_be_reviewed", include_signature: false,
   emailer_template: { subject: "", body_html: `<p>${texto}</p>` } }];
 // [entre colchetes] = personalização que vem da Clay (post recente) ou do Attio (público, categoria, preço estimado pelo guardrail).
-// Numa operação real, os textos iriam em PT-BR para creators brasileiros.
+// Numa operação real, os textos iriam em PT-BR para creators brasileiros; [market] = Brazil ou the US, pelo campo market do Attio.
 const OPCOES = "<p>Two ways to start, whichever is easier: set up your page here [sign-up link] and I'll review it within a day, or reply \"call\" and I'll walk you through it in 15 minutes.</p>";
 // LGPD: o primeiro contato diz de onde veio o contato e oferece saída em uma linha
 const SAIDA = (onde) => `<p>I found your business email ${onde}. Not interested? Reply "no" and I will delete your contact.</p>`;
@@ -109,7 +109,7 @@ const SEQUENCIAS = [
     emailer_steps: [
       { type: "auto_email", wait_time: 0, wait_mode: "day", emailer_touches: email(
         "[channel name] × B2B brands",
-        "<p>Hi {{first_name}},</p><p>I'm Michel, I recruit creators for Passionfroot, where B2B brands book creators directly. I watched [recent video] and [one specific point from it].</p><p>Your viewers are who B2B brands pay to reach: [audience from vetting, e.g. plant managers and engineers]. Channels your size usually price an integration around US$ [estimated rate], and software brands from abroad are looking for creators who reach Brazil.</p>" + COMO + OPCOES + SAIDA("in your channel description")) },
+        "<p>Hi {{first_name}},</p><p>I'm Michel, I recruit creators for Passionfroot, where B2B brands book creators directly. I watched [recent video] and [one specific point from it].</p><p>Your viewers are who B2B brands pay to reach: [audience from vetting, e.g. plant managers and engineers]. Channels your size usually price an integration around US$ [estimated rate], and brands are actively looking for creators in [market].</p>" + COMO + OPCOES + SAIDA("in your channel description")) },
       { type: "auto_email", wait_time: 3, wait_mode: "day", emailer_touches: resposta(
         "<p>Hi {{first_name}}, to make it concrete, I mocked up what your media kit could look like with your public numbers (attached): [formats, e.g. integration and dedicated video], starting at US$ [estimated rate]. You would only need to check the prices and publish. Want the link to set it up?</p>") },
       DM_INSTAGRAM,
