@@ -1,0 +1,526 @@
+{
+  "name": "Creator Supply Engine · Brief → shortlist",
+  "nodes": [
+    {
+      "name": "Brand brief",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "formTitle": "Campaign brief",
+        "formDescription": "In a real integration this brief would come from the Passionfroot platform. For the case study it is a form.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Brand domain",
+              "placeholder": "elevenlabs.io",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Product",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Brief",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Budget (US$)",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Platforms",
+              "fieldType": "dropdown",
+              "multiselect": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "YouTube"
+                  },
+                  {
+                    "option": "LinkedIn"
+                  },
+                  {
+                    "option": "Newsletter"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "creator-supply-brief"
+    },
+    {
+      "name": "Apollo · company data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.apollo.io/api/v1/organizations/enrich",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $json['Brand domain'].trim().toLowerCase().split('//').pop().split('/')[0].replace('www.', '') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Apollo"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Build criteria request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Combine the form brief with the company data from Apollo\nconst brief = $('Brand brief').first().json;\nconst org = $json.organization || {};\nconst company = { name: org.name, industry: org.industry, employees: org.estimated_num_employees, description: org.short_description };\nreturn [{ json: { company, request: {\n  model: \"claude-opus-5-5\",\n  max_tokens: 4000,\n  fallbacks: \"default\",\n  output_config: { effort: \"low\", format: { type: \"json_schema\", schema: {\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"categories\",\"platforms\",\"min_fit\",\"ideal_creator\",\"rationale\",\"content_angle\"],\"properties\":{\"categories\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"Marketing & Design\",\"Productivity & Personal Development\",\"Tech & Business\",\"AI\",\"Finance & Investing\",\"Health\",\"Career\",\"Other\"]}},\"platforms\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"YouTube\",\"LinkedIn\",\"Newsletter\"]}},\"min_fit\":{\"type\":\"number\"},\"ideal_creator\":{\"type\":\"string\"},\"rationale\":{\"type\":\"string\"},\"content_angle\":{\"type\":\"string\"}}} } },\n  system: \"You turn a B2B brand's campaign request into criteria for finding Brazilian creators in Passionfroot's vetted supply.\\nAvailable categories: Marketing & Design (marketing, sales, growth, branding, social media, content creation, design and UX); Productivity & Personal Development (productivity, organization, studying, habits, reading and personal development); Tech & Business (programming, software, data, product, entrepreneurship, management, leadership and business); AI (artificial intelligence: tools, agents and AI automations); Finance & Investing (personal finance, investing, economics, accounting and corporate finance); Health (health, medicine, nutrition, mental health and exercise); Career (careers, jobs, interviews, LinkedIn, HR and the job market); Other (none of the above, such as entertainment, games, lifestyle or consumer).\\nPick 1 to 3 categories whose audience the brand wants to reach. Use the requested platforms; if none are given, use all three.\\nmin_fit: 3.5 when the target audience is professionals or buyers; 3 when it is students or early-career people.\\nideal_creator: one sentence describing the creator whose content best matches this product, specific enough to rank candidates against.\\nWrite ideal_creator, rationale and content_angle in English, one or two sentences each.\",\n  messages: [{ role: \"user\", content: [\n    \"Brand: \" + brief[\"Brand domain\"],\n    \"Company (Apollo): \" + JSON.stringify(company),\n    \"Product: \" + brief[\"Product\"],\n    \"Brief: \" + brief[\"Brief\"],\n    \"Budget (US$): \" + brief[\"Budget (US$)\"],\n    \"Requested platforms: \" + [].concat(brief[\"Platforms\"] || []).join(\", \"),\n  ].join(\"\\n\") }],\n} } }];"
+      }
+    },
+    {
+      "name": "Claude · brief → criteria",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2026-10-21"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "server-side-fallback-2026-07-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "name": "Criteria → Attio query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Read Claude's answer (JSON guaranteed by the schema) and build the supply query\nconst r = $json;\nif (r.stop_reason === \"refusal\") throw new Error(\"Claude declined the brief: \" + JSON.stringify(r.stop_details));\nconst criteria = JSON.parse(r.content.find((b) => b.type === \"text\").text);\nconst filter = { $and: [\n  { verdict: \"Approved\" },\n  { passionfroot_fit: { $gte: criteria.min_fit } },\n  { $or: criteria.categories.map((c) => ({ passionfroot_category: c })) },\n  { $or: criteria.platforms.map((p) => ({ platform: p })) },\n] };\nreturn [{ json: { criteria, query: { limit: 400, filter, sorts: [{ attribute: \"final_score\", direction: \"desc\" }] } } }];"
+      }
+    },
+    {
+      "name": "Attio · query vetted supply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/people/records/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.query) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Build ranking request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Every matching creator goes to Claude with a short id and a content summary\nconst { criteria } = $('Criteria → Attio query').first().json;\nconst brief = $('Brand brief').first().json;\nconst v = (p, k) => p.values[k]?.[0];\nconst candidates = $json.data.map((p, i) => ({\n  id: \"c\" + (i + 1),\n  record_id: p.id.record_id,\n  name: v(p, \"name\")?.full_name,\n  platform: v(p, \"platform\")?.option?.title,\n  category: v(p, \"passionfroot_category\")?.option?.title,\n  audience: v(p, \"audience\")?.value,\n  score: v(p, \"final_score\")?.value,\n  price: v(p, \"rate_card_usd\")?.value ?? 500,\n  summary: [...String(v(p, \"content_summary\")?.value ?? \"\")].slice(0, 400).join(\"\"),\n}));\nif (!candidates.length) throw new Error(\"No vetted creators match these criteria: open a sourcing batch.\");\nconst list = candidates.map((c) => c.id + \" · \" + c.name + \" · \" + c.platform + \" · \" + c.category + \" · audience \" + c.audience + \"\\n\" + c.summary).join(\"\\n\\n\");\nreturn [{ json: { candidates, request: {\n  model: \"claude-opus-5-5\",\n  max_tokens: 32000,\n  fallbacks: \"default\",\n  output_config: { effort: \"medium\", format: { type: \"json_schema\", schema: {\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"ranking\"],\"properties\":{\"ranking\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"id\",\"brief_fit\",\"reason\"],\"properties\":{\"id\":{\"type\":\"string\"},\"brief_fit\":{\"type\":\"integer\"},\"reason\":{\"type\":\"string\"}}}}}} } },\n  system: \"You rank Brazilian B2B creators against one campaign brief. Each candidate has already passed Passionfroot's quality vetting; your only job is how well their content matches this brief.\\nScore every candidate from 0 to 10 for brief_fit:\\n9-10: they regularly cover the product's exact topic for the brief's target audience.\\n6-8: their audience is the target and the product fits naturally into their content.\\n3-5: right audience, but the product would be a stretch for their content.\\n0-2: no real fit.\\nJudge from the content summary (bio or channel description plus recent titles, usually in Portuguese), not from fame or audience size.\\nreason: at most 15 words, in English. Return every candidate exactly once, using its id.\",\n  messages: [{ role: \"user\", content: [\n    \"Product: \" + brief[\"Product\"] + \" (\" + brief[\"Brand domain\"] + \")\",\n    \"Brief: \" + brief[\"Brief\"],\n    \"Ideal creator: \" + criteria.ideal_creator,\n    \"Content angle: \" + criteria.content_angle,\n    \"\",\n    \"Candidates (\" + candidates.length + \"):\",\n    list,\n  ].join(\"\\n\") }],\n} } }];"
+      }
+    },
+    {
+      "name": "Claude · rank against brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2026-10-21"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "server-side-fallback-2026-07-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "name": "Build Jev requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const BRIEF_NODE = \"Brand brief\";\n// Jev scores the same candidates on its own, blind to Claude's ranking\nconst { candidates } = $(\"Build ranking request\").first().json;\nconst { criteria } = $(\"Criteria → Attio query\").first().json;\nconst brief = $(BRIEF_NODE).first().json;\nconst clean = (s) => (typeof s === \"string\" && typeof s.toWellFormed === \"function\" ? s.toWellFormed() : s);\nconst questions = { brief_fit: {\n  type: \"score\",\n  instructions: clean(\"How well this creator's content matches the campaign brief for \" + brief[\"Product\"] + \": \" + brief[\"Brief\"]),\n  criteria: [\n    \"No relation to the brief's topic or target audience\",\n    \"Same broad field, but the audience or the topic does not match the brief\",\n    \"Right audience, but the product would be a stretch for this content\",\n    \"Right audience, and the product fits naturally into this content\",\n    clean(\"Regularly covers exactly what the ideal creator does: \" + criteria.ideal_creator),\n  ],\n} };\nreturn candidates.map((c) => ({ json: { id: c.id, request: {\n  model: \"jev-latest\",\n  questions,\n  state: { creator: clean(c.name), platform: c.platform, category: c.category, content: clean(c.summary) },\n} } }));\n"
+      }
+    },
+    {
+      "name": "Jev · brief fit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.typesafe.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Jev"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "name": "Shortlist within budget",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const BRIEF_NODE = \"Brand brief\";\nconst MIN_BRIEF_FIT = 6;\nconst RESERVA = 0.1;\nconst MAX_CREATORS = 25;\nconst ATTIO_OWNER = \"9fbc6ada-b757-46cc-923f-6e940271cdb6\";\n// Claude and Jev score every candidate blind to each other (0-10); the ranking uses the average.\n// A gap of 4+ points is flagged for a human look. Fill the budget minus the reserve; nobody below MIN_BRIEF_FIT.\n// LinkedIn and newsletters have no price guardrail yet: they count as US$500, Passionfroot's lowest band.\nconst r = $(\"Claude · rank against brief\").first().json;\nif (r.stop_reason === \"refusal\") throw new Error(\"Claude declined the ranking: \" + JSON.stringify(r.stop_details));\nif (r.stop_reason === \"max_tokens\") throw new Error(\"Ranking was cut off: lower the number of candidates.\");\nconst claude = Object.fromEntries(JSON.parse(r.content.find((b) => b.type === \"text\").text).ranking.map((x) => [x.id, x]));\nconst jevIds = $(\"Build Jev requests\").all();\nconst jev = {};\n$input.all().forEach((it, i) => {\n  const score = it.json.answers?.brief_fit?.score;\n  if (typeof score === \"number\") jev[jevIds[i].json.id] = score * 2.5; // Jev answers levels 0-4\n});\nconst { candidates } = $(\"Build ranking request\").first().json;\nconst { criteria } = $(\"Criteria → Attio query\").first().json;\nconst brief = $(BRIEF_NODE).first().json;\nconst budget = Number(brief[\"Budget (US$)\"]);\nconst target = Math.floor(budget * (1 - RESERVA));\nconst ranked = candidates.map((c) => {\n  const cl = claude[c.id]?.brief_fit ?? 0;\n  const jv = jev[c.id];\n  return { ...c, claude_fit: cl, jev_fit: jv === undefined ? null : Math.round(10 * jv) / 10, brief_fit: Math.round(10 * (jv === undefined ? cl : (cl + jv) / 2)) / 10,\n    split: jv !== undefined && Math.abs(cl - jv) >= 4, reason: claude[c.id]?.reason ?? \"not scored\" };\n}).sort((a, b) => b.brief_fit - a.brief_fit || b.score - a.score);\nconst qualified = ranked.filter((c) => c.brief_fit >= MIN_BRIEF_FIT);\nconst shortlist = [];\nlet total = 0;\nfor (const c of qualified) {\n  if (shortlist.length >= MAX_CREATORS) break;\n  if (total + c.price > target) continue;\n  shortlist.push(c);\n  total += c.price;\n}\nconst left = qualified.filter((c) => !shortlist.includes(c)).map((c) => c.price);\nconst needsSourcing = target - total >= 500 && Math.min(...left, Infinity) > target - total;\nconst line = (c) => \"- **\" + c.name + \"** · \" + c.platform + \" · brief fit \" + c.brief_fit + \"/10 (Claude \" + c.claude_fit\n  + \", Jev \" + (c.jev_fit ?? \"n/a\") + \")\" + (c.split ? \" ⚠ Jev and Claude disagree\" : \"\") + \" · score \" + c.score + \" · US$\" + c.price + \" — \" + c.reason;\nconst note = [\n  \"**Ideal creator:** \" + criteria.ideal_creator,\n  \"**Content angle:** \" + criteria.content_angle,\n  \"**Spend:** US$\" + total + \" of US$\" + budget + \" (target US$\" + target + \", \" + RESERVA * 100 + \"% reserve)\",\n  \"**Ranking:** average of Claude and Jev brief fit, scored blind to each other; ⚠ marks a gap of 4+ points.\",\n  \"\",\n  \"## Shortlist (\" + shortlist.length + \")\",\n  ...shortlist.map(line),\n  \"\",\n  \"## Next best, not included\",\n  ...ranked.filter((c) => !shortlist.includes(c)).slice(0, 10).map(line),\n].join(\"\\n\");\nconst deal = { data: { values: {\n  name: \"Brief · \" + brief[\"Product\"] + \" (\" + brief[\"Brand domain\"] + \")\",\n  stage: \"Lead\",\n  owner: [{ referenced_actor_type: \"workspace-member\", referenced_actor_id: ATTIO_OWNER }],\n  value: total,\n  product: brief[\"Product\"],\n  budget_usd: budget,\n  target_categories: criteria.categories,\n  brief_source: \"Hypothetical (case study)\",\n  associated_people: shortlist.map((s) => ({ target_object: \"people\", target_record_id: s.record_id })),\n} } };\nconst jevErrors = $input.all().filter((it) => typeof it.json.answers?.brief_fit?.score !== \"number\");\nreturn [{ json: { criteria, candidates: candidates.length, qualified: qualified.length, splits: ranked.filter((c) => c.split).length,\n  jev_scored: candidates.length - jevErrors.length, jev_first_error: jevErrors[0]?.json?.error?.message ?? null,\n  shortlist, total_usd: total, target_usd: target, needs_sourcing: needsSourcing, note, deal } }];\n"
+      }
+    },
+    {
+      "name": "Attio · create brief deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/deals/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.deal) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Build rationale note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One note on the deal with the reason for every pick, for the campaign manager\nreturn [{ json: { deal_id: $json.data.id.record_id, request: { data: {\n  parent_object: \"deals\",\n  parent_record_id: $json.data.id.record_id,\n  title: \"Shortlist rationale\",\n  format: \"markdown\",\n  content: $('Shortlist within budget').first().json.note,\n} } } }];"
+      }
+    },
+    {
+      "name": "Attio · attach rationale",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Shown at the end of the form. Approval happens in Attio: move the deal from Lead to In Progress.\nconst s = $('Shortlist within budget').first().json;\nreturn [{ json: {\n  brief_in_attio: \"https://app.attio.com/deals/record/\" + $('Build rationale note').first().json.deal_id,\n  criteria: s.criteria,\n  shortlist: s.shortlist.map((c) => c.name + \" · \" + c.platform + \" · brief fit \" + c.brief_fit + \"/10 (Claude \" + c.claude_fit + \", Jev \" + (c.jev_fit ?? \"n/a\") + \") · US$\" + c.price),\n  spend_usd: s.total_usd,\n  target_usd: s.target_usd,\n  matching_creators_in_supply: s.candidates,\n  with_brief_fit_6_or_more: s.qualified,\n  jev_and_claude_disagree: s.splits,\n  jev_scored: s.jev_scored + \" of \" + s.candidates + (s.jev_first_error ? \" · first Jev error: \" + s.jev_first_error : \"\"),\n  next_step: s.needs_sourcing\n    ? \"Budget left and no more qualified creators: flag these categories for the next sourcing run.\"\n    : \"Review the shortlist and the rationale note, then approve the deal in Attio.\",\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Brand brief": {
+      "main": [
+        [
+          {
+            "node": "Apollo · company data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo · company data": {
+      "main": [
+        [
+          {
+            "node": "Build criteria request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build criteria request": {
+      "main": [
+        [
+          {
+            "node": "Claude · brief → criteria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude · brief → criteria": {
+      "main": [
+        [
+          {
+            "node": "Criteria → Attio query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criteria → Attio query": {
+      "main": [
+        [
+          {
+            "node": "Attio · query vetted supply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · query vetted supply": {
+      "main": [
+        [
+          {
+            "node": "Build ranking request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build ranking request": {
+      "main": [
+        [
+          {
+            "node": "Claude · rank against brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude · rank against brief": {
+      "main": [
+        [
+          {
+            "node": "Build Jev requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Jev requests": {
+      "main": [
+        [
+          {
+            "node": "Jev · brief fit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jev · brief fit": {
+      "main": [
+        [
+          {
+            "node": "Shortlist within budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shortlist within budget": {
+      "main": [
+        [
+          {
+            "node": "Attio · create brief deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · create brief deal": {
+      "main": [
+        [
+          {
+            "node": "Build rationale note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build rationale note": {
+      "main": [
+        [
+          {
+            "node": "Attio · attach rationale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · attach rationale": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

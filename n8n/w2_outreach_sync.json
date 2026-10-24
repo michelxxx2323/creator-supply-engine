@@ -1,0 +1,265 @@
+{
+  "name": "Creator Supply Engine · Stage B · Attio → Apollo outreach (demo only)",
+  "nodes": [
+    {
+      "name": "Attio · stage changed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "attio-stage",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "attio-stage"
+    },
+    {
+      "name": "List entry events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Attio sends a batch of events; keep only Supply pipeline list entries\nreturn $json.body.events\n  .filter((e) => e.event_type === \"list-entry.updated\" || e.event_type === \"list-entry.created\")\n  .map((e) => ({ json: { list_id: e.id.list_id, entry_id: e.id.entry_id } }));"
+      }
+    },
+    {
+      "name": "Attio · get entry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.attio.com/v2/lists/{{ $json.list_id }}/entries/{{ $json.entry_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Ready for outreach?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.data.entry_values.stage?.[0]?.status?.title }}",
+              "rightValue": "Ready for outreach",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Attio · get creator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.attio.com/v2/objects/people/records/{{ $json.data.parent_record_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Apollo · upsert contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  first_name: $json.data.values.name[0].first_name || $json.data.values.name[0].full_name.split(\" \")[0],\n  last_name: $json.data.values.name[0].last_name || $json.data.values.name[0].full_name.split(\" \").slice(1).join(\" \"),\n  linkedin_url: $json.data.values.linkedin?.[0]?.value,\n  email: $json.data.values.email_addresses?.[0]?.email_address,\n  label_names: [\"Creator Supply\"],\n  run_dedupe: true,\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Apollo"
+        }
+      }
+    },
+    {
+      "name": "Apollo · add to sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.apollo.io/api/v1/emailer_campaigns/{{ ({\"YouTube\":\"6adb83c59b95b90010290549\",\"Newsletter\":\"6adb83c69b95b90010290565\",\"LinkedIn\":\"6adb83c8d6d1450021c6aba9\"})[$('Attio · get creator').item.json.data.values.platform[0].option.title] }}/add_contact_ids",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  emailer_campaign_id: ({\"YouTube\":\"6adb83c59b95b90010290549\",\"Newsletter\":\"6adb83c69b95b90010290565\",\"LinkedIn\":\"6adb83c8d6d1450021c6aba9\"})[$('Attio · get creator').item.json.data.values.platform[0].option.title],\n  contact_ids: [$json.contact.id],\n  send_email_from_email_account_id: \"DEMO_ONLY_NO_MAILBOX_CONNECTED\",\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Apollo"
+        }
+      }
+    },
+    {
+      "name": "Attio · mark Contacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.attio.com/v2/lists/supply_pipeline/entries/{{ $('List entry events').item.json.entry_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"data\":{\"entry_values\":{\"stage\":\"Contacted\"}}}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Attio · stage changed": {
+      "main": [
+        [
+          {
+            "node": "List entry events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List entry events": {
+      "main": [
+        [
+          {
+            "node": "Attio · get entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · get entry": {
+      "main": [
+        [
+          {
+            "node": "Ready for outreach?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ready for outreach?": {
+      "main": [
+        [
+          {
+            "node": "Attio · get creator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Attio · get creator": {
+      "main": [
+        [
+          {
+            "node": "Apollo · upsert contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo · upsert contact": {
+      "main": [
+        [
+          {
+            "node": "Apollo · add to sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo · add to sequence": {
+      "main": [
+        [
+          {
+            "node": "Attio · mark Contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

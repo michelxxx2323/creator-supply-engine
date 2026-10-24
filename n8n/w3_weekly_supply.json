@@ -1,0 +1,1175 @@
+{
+  "name": "Creator Supply Engine · Stage B · Weekly sourcing + double vetting",
+  "nodes": [
+    {
+      "name": "About this workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -340
+      ],
+      "parameters": {
+        "content": "## Stage B · weekly supply\nRuns every Monday. Finds the Passionfroot categories with the fewest approved creators in Attio, searches YouTube and Substack for new Brazilian creators there, and vets each one twice, blind: **Jev** and **Claude** with the same rubric.\n\n- Both approve → **Vetted** in Attio\n- They disagree on a gate or by 2+ points on fit or quality → **Sourced**, verdict *Dispute*, for a human call\n- Approved with a contact route → **Ready for outreach**, which starts the outreach workflow\n\nCreators vetted before are skipped (the batches already run, plus the workflow's memory).",
+        "width": 460,
+        "height": 330
+      }
+    },
+    {
+      "name": "Clay on a paid plan",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3100,
+        340
+      ],
+      "parameters": {
+        "content": "## Clay, on a paid plan\n**Enrich:** Clay's webhook source receives each approved creator, finds their LinkedIn, role, company and a business email (waterfall), and writes back to Attio through its HTTP action. The node below is disabled because Clay's free plan has no webhook source.\n\n**LinkedIn sourcing:** Clay's people search (Brazil, 10k+ followers, creator signals) runs through the Clay CLI today. On a paid plan, a Clay table would post each profile to a webhook here and join the same double vetting.",
+        "width": 460,
+        "height": 280
+      }
+    },
+    {
+      "name": "Why the Substack branch comes back empty",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "content": "## Why the Substack branch comes back empty\nSubstack answers n8n Cloud with a Cloudflare challenge (HTTP 403, \"Just a moment...\"): it blocks requests from cloud servers. The same searches work from a home connection.\n\nThe branch stays here because newsletters are part of the supply: same thin-category searches, same subscriber floor, same double vetting as YouTube. The run summary shows the status code of every Substack search, so the block is visible instead of silent.\n\nUntil n8n runs from a network Substack accepts, newsletters come from local scripts with the same rubric and land in the same Attio pipeline.",
+        "width": 520,
+        "height": 250
+      }
+    },
+    {
+      "name": "Every Monday",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const CATEGORIES = [\"Marketing & Design\",\"Productivity & Personal Development\",\"Tech & Business\",\"AI\",\"Finance & Investing\",\"Health\",\"Career\",\"Other\"];\n// One Attio query per Passionfroot category, to count approved creators\nreturn CATEGORIES.map((category) => ({ json: { category, query: { limit: 500, filter: { verdict: \"Approved\", passionfroot_category: category } } } }));\n"
+      }
+    },
+    {
+      "name": "Attio · approved per category",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/people/records/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.query) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      }
+    },
+    {
+      "name": "Plan searches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const BUSCAS = {\"Marketing & Design\":[\"marketing de produto\",\"branding para empresas\",\"copywriting\",\"UX writing\",\"design system\",\"design de interfaces\",\"marketing B2B\",\"social media para empresas\",\"marketing médico\"],\"Productivity & Personal Development\":[\"excel para financeiro\",\"produtividade para gestores\",\"gestão do tempo no trabalho\",\"power bi para empresas\",\"apresentações executivas\",\"notion para empresas\",\"excel avançado\"],\"Tech & Business\":[\"gestão de projetos\",\"SaaS\",\"system design\",\"engenharia de dados\",\"startup fundador\",\"customer success\",\"prospecção B2B\",\"inside sales\",\"negociação em vendas\",\"cloud AWS\",\"cibersegurança\",\"metodologias ágeis scrum\",\"logística e supply chain\",\"gestão de produto digital\",\"ERP gestão empresarial\"],\"AI\":[\"automação de processos empresas\",\"agentes de IA para empresas\",\"IA no trabalho\",\"n8n automação\"],\"Finance & Investing\":[\"FP&A\",\"controladoria\",\"fluxo de caixa empresa\",\"valuation\",\"planejamento tributário\",\"contador\",\"venture capital\"],\"Health\":[\"gestão de clínicas\",\"gestão em saúde\",\"healthtech\",\"saúde ocupacional\",\"enfermagem carreira\",\"marketing para clínicas\",\"administração hospitalar\",\"odontologia gestão\"],\"Career\":[\"recrutamento e seleção\",\"departamento pessoal\",\"gestão de pessoas\",\"liderança de equipes\",\"carreira em tecnologia\",\"transição de carreira\",\"people analytics\"],\"Other\":[\"advocacia\",\"agronegócio gestão\",\"gestão de obras\",\"direito digital\"]};\nconst CATEGORIES_PER_RUN = 3;\nconst YT_PER_CATEGORY = 2;\nconst NL_PER_CATEGORY = 2;\nconst MIN_SUBS = 2000;\nconst MAX_SUBS = 1000000;\nconst MAX_YT = 40;\nconst MAX_NL = 15;\nconst MIN_ASSINANTES = 1000;\n// Thinnest categories first; searches rotate every week so each run looks somewhere new\nconst cats = $(\"Categories\").all();\nconst thin = $input.all()\n  .map((it, i) => ({ category: cats[i].json.category, approved: it.json.data?.length ?? 0 }))\n  .sort((a, b) => a.approved - b.approved)\n  .slice(0, CATEGORIES_PER_RUN);\nconst week = Math.floor(Date.now() / (7 * 864e5));\nconst pick = (list, n, offset) => Array.from({ length: Math.min(n, list.length) }, (_, k) => list[(week * n + k + offset) % list.length]);\nconst publishedAfter = new Date(Date.now() - 90 * 864e5).toISOString();\nreturn [{ json: {\n  thin,\n  youtube: thin.flatMap((t) => pick(BUSCAS[t.category], YT_PER_CATEGORY, 0).map((q) => ({ q, category: t.category, publishedAfter }))),\n  substack: thin.flatMap((t) => pick(BUSCAS[t.category], NL_PER_CATEGORY, YT_PER_CATEGORY).map((q) => ({ q, category: t.category }))),\n} }];\n"
+      }
+    },
+    {
+      "name": "YouTube searches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $(\"Plan searches\").first().json.youtube.map((s) => ({ json: s }));\n"
+      }
+    },
+    {
+      "name": "YouTube · search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "type",
+              "value": "video"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            },
+            {
+              "name": "regionCode",
+              "value": "BR"
+            },
+            {
+              "name": "relevanceLanguage",
+              "value": "pt"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "publishedAfter",
+              "value": "={{ $json.publishedAfter }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "New channels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const SEEN_CHANNELS = [\"UCnnBpJ_fjSfS2BdNJce8UBw\",\"UCyHnA-g1oUHzGALhobCoO_w\",\"UCw0nJ177aSzyR6aWkB5dRbA\",\"UC5yn_hADczkiX2Nav-hXdag\",\"UC6s6gKVnBb7F-nPy-9h7AMw\",\"UCcC3XCDjYIhCVyIvywD4TMA\",\"UCsTbrRLGvoXGyg_j49yLR0g\",\"UCNVqnHxr3yIZtmiI3hTLrTQ\",\"UCMWTFvZ6Wo-vnEYH2LRQI5Q\",\"UCzn2XjWOH66CAEDGQTeZevw\",\"UC71-YIjjuj6TeVj_cRqQMGQ\",\"UCGk9WsrFHHevSQOB6jxF88Q\",\"UCsx_ZsgsX6BIFueejCDBLkg\",\"UCwlP2FUSXp9vzll1jU4BUxw\",\"UCF3PMc-KJgVg4fe5QgaieNw\",\"UCgA40fvlB_b4f0lp_pQnjgw\",\"UC-JZ0mf0vWld6zmUtroEeWQ\",\"UC2gDoWudSZ5jPKibWWZqfdQ\",\"UCqUQxsx3oGZd7MW6yCoX-Ew\",\"UCG06nFNgrvsj86ZJiBssekQ\",\"UC-ljyC0EIGRmum0TZuNSzgQ\",\"UC0C-17n9iuUQPylguM1d-lQ\",\"UCudzCqDLyk53Pp5_r2vBBpQ\",\"UCUf1Gl8mpJ-ZT189-NQ2ejg\",\"UC-bM1nKCilS0JyEe6qEEgSg\",\"UCI1C9eW5Me_vBCrwslrKkuQ\",\"UC3VakhwxDYdgTWIsw_-uf3g\",\"UC-whf-EJeRUmGANMy77LcDg\",\"UCEojuEA0eCL267t_G_cc0Fg\",\"UCTAg6tkWmcZbRZhSbzRllSg\",\"UCQI_wNgE-p7iyJbbg8yu3Aw\",\"UCudOR8xqReqK4gdjbQincYw\",\"UChA5ZOCZOVZjCn29-7eqDmA\",\"UCfxY6VgFFlPIE-__GEwLbvw\",\"UCH8q_QiLsNeZdu4rnbN_swg\",\"UCetRsdZxDQDcgVDJd6erz6g\",\"UCwHAhbMwaojStWUAYARK1NQ\",\"UCA0FkabsOEDCcfpUciLnc9Q\",\"UCIxj-mVaduBR3CPhXUofCyw\",\"UC3BF1TyuZQDiRrdw-fQellQ\",\"UCPiFnumppJKeNVGo5DS-xKQ\",\"UCGi_SASiOZwMqq5Surm8BnA\",\"UCA35kBfXCGlYgLSuDCJ9GeA\",\"UCz4yF0l7WcdceUcTpjRmYMg\",\"UCyVJy2Gm4-QT5Lxxh80W-qg\",\"UCla4XyxYbC-s4d5BoOL6VwQ\",\"UCJAZqGr79F9gNtJjk_cmDgg\",\"UCcxBUnhLvNtOtaXQnz9V52w\",\"UCHtb5nC2wuAd6pZ22YlR-bA\",\"UChdMYJwcBpizC4NLh5dRh4g\",\"UCWa7GC6VF6M3GxHieUgMvSw\",\"UCry86W-sTkARNGHW0rnRBYQ\",\"UClqoc-Mei-9viEpTFlUMQ3g\",\"UC2W_8opsTa6U_jClX0sDX0Q\",\"UCuwyin4DA80a161r6UEVr_A\",\"UCASZnQqXPnKltTda0TJieGQ\",\"UCwCyve8wJg4gC3dwaqqc1ow\",\"UCcwpfefu_4eziW_UBEZLQ6w\",\"UCdk02rzUJ6RjC0wtdFcSWWw\",\"UCMbGt0MuxDW6rQAX_Ih8gvQ\",\"UCCzotV_VP-Zgc31klNMg_Iw\",\"UClbiASJGSO7pxYEjQVMFubA\",\"UCMxqhdELkftE8DuBZiwdPfg\",\"UCfeguY_zlv2p89uX9zqp0vw\",\"UCdoyZqj_a-CarSwNr28rtag\",\"UCZhG1qYgQglpU5AiCfFsQIA\",\"UCRXg4_JwSHY1oSsemC00E-g\",\"UCJ7M2GR0fZnkJJjhLskiYVw\",\"UCddX5XW8jrxKbNO0NyA2bfg\",\"UC1aW5Cdw3hOmygxAQI2O9oQ\",\"UCO0x-39c7EttOhmFAsngfgg\",\"UCfBVodXGLNd32NzMWm-N2mA\",\"UCwwLN_FpsJ3N-D-szSaZS9w\",\"UCKEeNZeecIOk96WDcwg0LRw\",\"UCdWe_xTGW0FLgiOGBZsQO6g\",\"UC-t7_pqaaeYMbGLmwtUvdfw\",\"UCc67UKh1_TrzFVCHKsVGcNQ\",\"UCYrXebwbK6IE--7z4JJE5mA\",\"UCU8rU8Muy2NXtggSsRIcSWg\",\"UCeQox92efOXNJPPDBYJ1ZbA\",\"UCPIAn-SWhJzBilt1MekO4Vg\",\"UC-3QtN17NVNtvW4CvVGnyEg\",\"UCta1sF9e9YzzNG4OlQgIlXw\",\"UC-7yVRhnxk5wieH78It3FJQ\",\"UCo0jMsIPccAXghE_FCWIdNg\",\"UCEgYlWh3HH0u7ye8PNlcQgg\",\"UC6bMtPdKDxeHpASacivx5vQ\",\"UCOHSTMgsRnqrUy8NUL6LUAA\",\"UCRAsqIQp_6_W3TdpWOzFgqA\",\"UCYx10jQ_0QeqkV7gWiUE5yw\",\"UCcxh50OGGeChITcQ6QCFOWA\",\"UCifUfSNdly4yFOfzSDS2xog\",\"UCxXL5491Db9U8Rhfs-2LVFg\",\"UCclt53MOzA-FApBlPhB8EKA\",\"UCGvYuw6fK_AdKpYnf8hHSjg\",\"UC_cILInryQdcBEiBfA86CQQ\",\"UCToFxQ5_N2Rr-m5xbhcet6w\",\"UCFuIUoyHB12qpYa8Jpxoxow\",\"UCLrewDGciytcBG9r0OxTW2w\",\"UCxKjFIitplR7JNSRLU7ZUpQ\",\"UCvI7-fngIbNNWyZM9M3Ly8A\",\"UCg7k-dzPbfQq44mw6tkeF-g\",\"UCUEgJIixzlG53ybR9tZufxw\",\"UCcYKjf55fmOsJW_on8UIs9w\",\"UCafFexaRoRylOKdzGBU6Pgg\",\"UCjSREaWzrRJTQF4aXQah_zw\",\"UCtKSRF_DkOUXj6rNkMw00KA\",\"UC3i3qKQ5aR_guegQj5bhOMw\",\"UCOyD3zbdCdKX8KFsigHb3lw\",\"UCV8jlWXQzAO2FHkroj_i0hg\",\"UCupIW_K2OzgL8iq8LTiGYyg\",\"UCOu9pKHv94bFeRy5vzB-b1Q\",\"UCJJjTUt12iH4bbzQll9tYgw\",\"UCxVxcTULO9cFU6SB9qVaisQ\",\"UCiGWNa6QK6CiKPvv5-YPv8g\",\"UCh9HMS4C3F02msM-kiilAdA\",\"UCG8Woy3WwNyv2H_dLP_KFkg\",\"UCtNc1N0Tdt7xbO3uf6BqEhw\",\"UCW3wL2K4qSdWef2HV1u-voA\",\"UCZ4tbbWqY4QvZti5MXEc5Cg\",\"UCRm5g0Xum-pk4mX3lkXo3Wg\",\"UCwZwvDC6f0WhcVTG-3aBUTQ\",\"UCkhe-I4rdFGrTHEQAsOXP9w\",\"UCtmp6SxzLscu0GRTbgM8FTw\",\"UCtKR9x60aF8SG8qngDc7elA\",\"UCZw7cHXr1JEH1h1ikZkocPQ\",\"UCxm0tptjIc76-i26EKQ9NpA\",\"UC_HuKhA1xDOAILWWWztsaGQ\",\"UC8uPUlX7llBIlUQqD2cOI4w\",\"UCR1VeMTkDBi4lzX1vocHBwA\",\"UCh9sXMUqoEZfAUTyoBBF54Q\",\"UCx-e4S_eN6bZAWV1uQTzKsA\",\"UC3unCnFZ7RypoYYS9d_qx0g\",\"UCpuJeRIQ_MySvluzBLFT2Pw\",\"UC_TMdGzj8xZbGJ8P9IwZ41A\",\"UCRVzEriB1B2JKGpsLpL-uNg\",\"UCN3tZfcySn-VVeSRdGFIYOA\",\"UCVpHmGfbOyUoJXnAEQKFcWw\",\"UCbSAFcj6mhbAfREWVC5o6PQ\",\"UCtIXjNN3r_VPBpUnccpPTsQ\",\"UC13gar1iS-icxHq7wEQLPaQ\",\"UC1VegPLsP9Yb_0pIaGyRmAQ\",\"UC0uOlfXCqmP26BaILsXoi_w\",\"UCkADs8Lfp8-P6uEZmOYmzaw\",\"UCXKq7LnNU-5dTL1WKLeGX3Q\",\"UCf0-ULyc0uz55I4ZgtLgyCw\",\"UC_DS1Xyzt1P3ZU5efkmBukg\",\"UCvj7F4HDOyWXMOKQzvBkS1w\",\"UCdvTtvc_FhqSpH7029FmFHw\",\"UC2hPLxVxFVJljSVrnuHLaxg\",\"UC1kO9AExbkxpdxOTmrli_Pw\",\"UCX87B_IeXWm8Xjt5Yw0-8WA\",\"UCuw7EzDUX1DaTPcrbp3rdZQ\",\"UC6FmN1UfuWlm0h-3-D6AxNA\",\"UCqYUF8Aq6hTz2BHmL_uocUA\",\"UC3kpz-vanNAqn-FIcKCR_5A\",\"UCukUmD8PnJLvTVVUPIgV1eQ\",\"UC5h-VoTL2IWKa1PkLFIG-ig\",\"UCx-HCuPWbhvmalxglvFSblg\",\"UC2IbGwtn8R0-5yPfwbgeJ9w\",\"UCxvZ3gPlq9n2trEPK7iknYQ\",\"UCHqvw9v2Fp6o006lUskoigg\",\"UCvlvA6lqtJcPhLCegsPwyGQ\",\"UCHPgHhXMiHR7AGrdF5brg2A\",\"UC5g1kvyNO83VDWfb6sOVHeg\",\"UC9i1zdTIEneuBryd7p2OE0g\",\"UCIDjt64o16IbdiFwU9m5Mkg\",\"UCtMNXWhNnpV486Xdi2k_Waw\",\"UCi7pTszQxSB4Xsx8Y8t6vlg\",\"UCCUlX6loZIiWNl6k-DV8xfw\",\"UCnSPN9CjZmWq28bm6lr2kdg\",\"UC3kePY1S3nz-il9MWflY6YQ\",\"UCj0t5S5jti4Gm6Io-8363qQ\",\"UCZWIbJQKWlzqjWYcx_xVuhg\",\"UCNMMFx2Z5DVBLnkbPcjjYpA\",\"UCw_5Y5pvxY-L3iXxqiMLKQA\",\"UC3FYCVPb10UAYZ3Ida3TZyQ\",\"UCWdI4YS6yeuTyrA_MuUIoSg\",\"UCm8f8qEEPvlYj5OBSMQtbAg\",\"UC9iusg9ZUmiSqXmppE9J1IQ\",\"UCYRRvQixSz72sn9FOZFwZIQ\",\"UCkyoK0GIPgzy-yQwoV78GcQ\",\"UCGxn4QDBpTKN8fS6vbxtVag\",\"UC5l6ls7v2xAtZFnSDjY6yHA\",\"UClgUNBEbS3oso5AmyNOedEg\",\"UCLc5Bq2yfs-S3Zse3ZFRMEQ\",\"UCtqkr4wIfKH-Ql5ip0BX7TA\",\"UCtW1PsP-9sHdQNF0MiSyj_Q\",\"UCpOSu4F9cqSjh1OgbmOT5cQ\",\"UCiXIMp68A1907c8a3zlSM5w\",\"UC9cOiXh-RFR7KI61KcyTb0g\",\"UCe4X1GELYewG3jaWixojmYA\",\"UCMUoZehUZBhLb8XaTc8TQrA\",\"UCuFdW0jIctCUSVqXtr5ImIA\",\"UC7-p1jbfX-i2BRVTNW4LBSw\",\"UCvhbqao94JvHYARl1ioQkyw\",\"UC23y3W9PAUKyM0M-yyMKTBA\",\"UCzOGJclZQvPVgYZIwERsf5g\",\"UCLw0GOS6pBRO69G6-1ABOcA\",\"UCJO-NK5jzq0pggjf3p5EZ9g\",\"UC1VZDEtGNxfQzh7EYcD2frg\",\"UCKLJj2nJH3th04qeaDT_riw\",\"UC1IUVz1NctdP2JyM9298PXw\",\"UC3aXfqn4zROocdIyj7bchaw\",\"UCEfe13EhK1ltXs3FeHGa5gA\",\"UCAufYblFdI7KF8jSYkhSlcg\",\"UCzpRs-EZUwgKEAyG7u1f6IA\",\"UC9dv6mpR7ExzJ1F0HMdHtPg\",\"UCDZ1KsyK0BhBS-ucF9fFXaA\",\"UC7Tc2ghAr8ajU7yuudiwa9w\",\"UCayzxes9bGHZNxqZnE6L-PA\",\"UCFV3j-V6aESI35hwHYrno9Q\",\"UCHUZbGpM0QUHDt8eq5p0k_A\",\"UCdMli6EKDqUJ_-KF_jxN45Q\",\"UCHhHEC4W2OaFGNNaW268ppQ\",\"UC-S82QSyHb-e3FddEO6Tq6w\",\"UCqfWrrb93DNG-HywXC_46Lw\",\"UCfdVZh6UYPff_zeNe5wyZUQ\",\"UCk6J-38bBJ2Lw9bDaUYFONA\",\"UCbiGwU0-W1XCDUrt3BTVrag\",\"UCdis83T8l695p-mELr1cY0w\",\"UCwoumfoiTcKnNn8BMIdxZBg\",\"UCQGPLwYuaLEl3xncpLUMvfQ\",\"UCoUZGs1kfIOX40h08KlGQfA\",\"UC5cY7agID9yvdezCBYGTraQ\",\"UCq4tL0My6NKKx1NuNr0WHwA\",\"UCbFZv9G9pN7SPaCNOOR7KnQ\",\"UCRzi87KkMSva_K6TOu3G5Pg\",\"UCsPtIRk9f49ohvF0A3zVKIw\",\"UC7IkX4S0ixK0QBSdW8rDaXQ\",\"UC_BhdHt-PT9NKPN1I3au6hA\",\"UCGzCyWHBGYSS_ZbVs0eygvw\",\"UCtA8JcGCTnqXMtJ9Kd516aw\",\"UCyI9WDzbJj8g8rSlBFY5qCg\",\"UCpft4jV8SoWIrxWk7t_9dHA\",\"UCAQsDVc1sXVVbnb_o4EbM3Q\",\"UC_iGAQx8zHqWBqMfejoDpPw\",\"UCERxp_D3qMWOkppD5ylYlgg\",\"UChSJ1_6O4qN6p2SK1Ho4QEA\",\"UCHCTHdNvc9cGhANhuXqe7LQ\",\"UCItDVWRihIVhM7QTEkXPgeg\",\"UCDPjuUmaWNjcgrAIkVfNTLg\",\"UCqtIiC_Fa_dNLqfUhbw_Dwg\",\"UCo29f8TwtkUZI9PDNVfMNYQ\",\"UCwiiK0GD_4DUcBFy5j4Pv3Q\",\"UCrPbAoQKz42Gm0mLdWatAEA\",\"UC3SY8DvLfEGCkQmBmxW21AQ\",\"UCIhBhRpaWD3-n8YKZcEtR6Q\",\"UCY-FPXguTtLHSTK5YpQ-sgQ\",\"UCtSfB9Q_8Yywi3bjj5m54Ew\",\"UCanwFhkn2kB0bwzqLm8oZzw\",\"UCCvGQLY1f-UMYEHz-PZ2QGA\",\"UCNcueBX9okR5TpBKwTF3_Rg\",\"UC4JcWRW-OQ-2S2UvSoMRy5w\",\"UCnd6_BMUtchihfAYTes4MFA\",\"UCgEs_9vWnO_Q79z-WFGHvSw\",\"UCiFJPxcCl4W9DTvy7KLh0pw\",\"UCv7xhacQvKNPCbUmZy7mReQ\",\"UC5IjbFXY-77YsiWhNacaQuQ\",\"UCgRap62FfuYYHBpEAJPzfjA\",\"UCWojUQiI7QOaBg8-I0f7qCQ\",\"UCIINTckj0Br5h1jB8ki5J2A\",\"UCCYlDZKQotyQ0VA-c8GxMlA\",\"UCA2b8AWN_j1MNf-RorUGHIg\",\"UCHJPSW9FgSoXGVFV489XXag\",\"UC4twH4sJ60y4slYC07RUOJA\",\"UC_ljDL0z_Lf9vT1WSkq9MEg\",\"UC2yF8fPmtafxPR_reQyWnKQ\",\"UCakZ2jqBzraRRpyii9RqjLg\",\"UCv9ZWZqaTUA80TgubX5Mb_Q\",\"UC5ZMTgsTj4a1Zv048XDsSyQ\",\"UCkRXDd4nZtjqFgj7wWdfuVw\",\"UCGtmidJAUHfKpwpvzPcHSOg\",\"UCr2N5zdeGEQAOnLlA32iRfA\",\"UCKpJSaKse5aV1TSyuXzq2Yg\",\"UC8_W_WL1cQm4jYTb2Cv6KLQ\",\"UCGV0UvhhcBM_Bjd-Q81PFRQ\",\"UCTnVLo5g_tosdmIzrfSrSgg\",\"UCa0vith_mMXwsrNR9OdvLsw\",\"UCa-zD3Q0ZCbfssPQlNQFzqw\",\"UC-dRoABm-_rKxZG9m4wzR8w\",\"UCDeTDgtUAySYuZR5nD10A7A\",\"UCA8eQMmie2o27I42cTfD-UA\",\"UC629vKGFPRc1rz6VDm6OZiQ\",\"UCoRMjvYjQGayQ3DVGOa2sEw\",\"UCgnACLvM9O5lfm9ZBh_d3cg\",\"UCJUG8YjSoovkYeBYm3ppycw\",\"UCYT7b6ydbpdvITVS-hs0IBQ\",\"UCd4MhWhSeqK1Ga4OKOPSxSw\",\"UCYsbFHEyLhT7afMgjrYdi0A\",\"UCkXGJHtYhLh6_1QBA55aFIA\",\"UCy2XqP2R00mwt84rQT_KLSQ\",\"UCKGTJXzbOxPXAn48931iZ0w\",\"UCCIhACvBoeqpa1JvD9XBCJQ\",\"UCbEDessPB2z0MEQT27Shm6g\",\"UCcwyUGzAK5H64QV0vY1FoFg\",\"UCen2zvFtEwsRXReUKySt2MA\",\"UCTpzTSSocGLvtqz-jlRvIrg\",\"UCPfEa4hhzVGOxt05mWKHvZQ\",\"UCNjbNzUU-KcNxz-xcEuARXg\",\"UCo7EHzKF2zDFWszw7Dg4mPw\",\"UCd05wq5Bfb6vN_GSOypnfKw\",\"UCIRKpVCTZ_j2Wdjejb6XJ-g\",\"UCqdNtyrTgueVNacNfe_FVJQ\",\"UCfqWmM0OSStMogzlIFQKIaQ\",\"UCBPaTZMoENCs9oBCDLUh0dA\",\"UCBYJKJXaigXVTVsr2UmtWyg\",\"UCaPyLcOSsF3_BiXdhd7-SUg\",\"UCvniynLiMPiu7CQLoDrf3LQ\",\"UCgh8bkjEm8Ava3wcQILJpzA\",\"UCYJ1SVXZqgIC9EMeyFRP3FA\",\"UC6g6eok10NJGYgenHO-0Oew\",\"UCpKvMmsF6QrkVr_zWaLGK-A\",\"UCv4gDcTAwo49ojEJ45xvG3Q\",\"UC6l-g1HBedpdXoNXyMAyHIw\",\"UCtjtDGfc9_q3omK3HIHCV_A\",\"UCj9ZJklCi0HKtNZCMl6twMA\",\"UC8TRfZVb-M_ivbU9yiocTvQ\",\"UCE2-ELQ-bi6c7HvBcVoe7qw\",\"UC8-S0vkPRhUxg6EpmWDkvaw\",\"UCWoC0ZWLet0eSMTHk6kQx9g\",\"UCWX0cUR2rZcqKei1Vstww-A\",\"UCUEhcayeYLO-VpIZSfhmufQ\",\"UCGg4ozMH7Z5rocN8qyxLP6Q\",\"UC6GpzKrDL84LkmX3rzVI_tg\",\"UC_ytvT9cXh-zkf9x0CnYE8g\",\"UCyEziKDlkhZ2-j2Dtpv26ZQ\",\"UCvNQuM8oPy-oO-5RZ80vf8Q\",\"UCU0K-oStnmDQ_IhVfuf8miQ\",\"UCB2u-l1NGQAmVg1k41nEg3g\",\"UCUy0NlW6WlVFj8V3xhXegYQ\",\"UC-QLxQ7cFp-3CFnSZO6oXXw\",\"UCGqdq36Vag3MGuqDhxpLYfQ\",\"UC83PoYPlWbui0eoV-68Eg4g\",\"UCSZtSAptH6MjAn88QPaB8-Q\",\"UCyFDinSK__vjRQFQJQlWJyw\",\"UC5yOHwOvLMpYEMuTA7XuLIQ\",\"UCb0B0FYZEWm8X4MEkE6Oh-g\",\"UCSDzbRWL7DkSKdVhLz628Xw\",\"UCt5xIkZE56YUrFeaub5_ATw\",\"UClCWVnDiDSKbm94eKcxSkpQ\",\"UCD4Vq6ChMJY0clP9pUJki0g\",\"UCEElaJjG3sUbUDlTPvWPewg\",\"UCo7pJ2VrxM5UTYrEyHK-FDQ\",\"UCREWWiiHHuNAS2cO5Atp8zQ\",\"UCrNYWKiE5s9cUWZ3-HporKA\",\"UCns20nmxB9J5TU2aZLnKi4Q\",\"UCtpzRE1LaVAxeX8zLFNVXdg\",\"UCngYN5yLfUlWvp5pkqo6YZA\",\"UC6_wVrgvF4tR3YS-dCEOVOQ\",\"UCKmWWUSI6m51A8a-bZ0dQNw\",\"UCOADfRXMV7j8haY5w9hJUnw\",\"UCqPo942wwU64N0CLpi67x2w\",\"UCuxHFd9Y6eSVfdOpLL9o6zQ\",\"UClLWs4dwNlT1gqsxYBoK_Ww\",\"UCxgbmfU0a2wEBCiklVGkqlA\",\"UCZ3h0hDPx-PgZ2dvCs7-zVg\",\"UCq7YrRO2JQp1lDcd_HXdp_A\",\"UCcSvnusnyrk0d4GOTwG4MZA\",\"UCFLK2Bw4KIDwiKd9pN_tI7Q\",\"UCW4md7iNrIj46mZuO7RyFGw\",\"UCu1JwydqR-wwifPV1nlHb8g\",\"UC0O763GZ5rBiK9V_AhqJjZw\",\"UCrdEvlsbB190ESqGkLSvUiA\",\"UCFDpWNghQg4tycUU9BRe1MQ\",\"UCO6_kvUIUY-ViXL3vFxJH-g\",\"UCRod5sZ-2iL7Q6G_N3R4q8g\",\"UCXN7h9Fq2iIS4T4YgxSYyzw\",\"UCpKbjgVXitTO7mIkalr4-kQ\",\"UCHxCFXrPpdR8Zce3N7QdZeg\",\"UCdoSFxwHFkMvzQ4oI2m1VKA\",\"UCzTjwTubD9FtCsp6sIxBICA\",\"UC9bFF5UungxOqxvnOUaGMIA\",\"UCKnK4JVM9zCsVdxnyxpSS6w\",\"UCAnQDFB4y4VoSlyb0XZKcTw\",\"UCYJtfaxkeurf0vX3baIYgKg\",\"UCfE9rsV73m1fd8G70IZBqeA\",\"UCWqrnJYussMFHy5_AxwK5gg\",\"UCv-aTcKq2xDxgvx9Fa2Ppag\",\"UC2Uv9rN3oxzZBSfyaZA2g_A\",\"UCDK54DLJDvoXZ8vdHaFFJbw\",\"UCv2JBo-M8FBYkUHDtXsCl3g\",\"UC3tLorcGhPkbjwlME6LRmzQ\",\"UCUNXDfAT9vpYLk55diJ9ffg\",\"UCMs4dC8I8MqX-ZbfmSi0MAQ\",\"UC2QNiP0b4o-NBgKXdmRW8KA\",\"UClxQSoxA0Kv2T_E19OQ4-ug\",\"UCiePf3WjIZGshGRkioCUGgQ\",\"UC5DcTVbjHUrbceXQaiMO-3A\",\"UCItveY3PHwXe4heDu35t7jA\",\"UCuhnfwz33VjDh9hUS-Nzb4w\",\"UCkDrwjPbPH8DbY0LATTy8Zg\",\"UCJq499lrvqN9c3iQTTNCEvg\",\"UCN9wfWdEgkINbJiEUCL-h-Q\",\"UCi4y7ZfTW_gEHh-V2oNIoPQ\",\"UCMtx3gvwAkwbuMfwdXLdZBA\",\"UCXjwJ_ZxlSsbMSOqCdSAJfA\",\"UC4sUjT9WhunT4AhH_L_pnRw\",\"UCyQkzviN22E_f86ObB7G2dA\",\"UCBs_Az1QW5mmxbGF1FIC_0g\",\"UC-7HvhddSmOJMO-FTb1K74Q\",\"UCmTpUU9QzNs8e7b6nccR55A\",\"UCWNCh37slsBfxwfgSBM-3ig\",\"UC40s4BIoa-VSdZlpcW5fYwA\",\"UCeTbdVSN3B2OrX-_zRrT_7A\",\"UCYBm-4sYAUusJ8QpIFrUI4w\",\"UCmG8WLd6iV92naGLPx7hK7g\",\"UCwEjdKpFK-vXWixojy0wpiA\",\"UCE5X3vfdtNS0uOpOAsVzImQ\",\"UCpUIZVcxN7fYEdaKaRCxzjA\",\"UCJbuO-k1LvwxUB5bNhbWSCA\",\"UC2X5hMsQu95cPsnq3Cx18Jg\",\"UCHoFZRApro1Dma3UZOD3ocw\",\"UCLcxHYz5fzpCc6Y8AT73TrA\",\"UC-RvJryX_UuR8fmtXCAlVTA\",\"UCMm41aDMDqGaY5ossMmJTvQ\",\"UCMtI__IJ6PC-zFpaYxrJ4Cg\",\"UCgPVgW47B26uPGbsJ_RfZoQ\",\"UC1AdPz-_yrjWqeWaj93RzgA\",\"UCNEllDrjM3viXNkdkQpW6MA\",\"UCf3y13UYPbtAzq3tz2f5UDw\",\"UCPBVMFp1HNCPj7RESDX9UpA\",\"UCV3lVU-eQR0RBMJemzbESeg\",\"UCre2znh1UaVA1gNzgQNK80g\",\"UCpG6NpEbQ9ETrFYjAv7rXMA\",\"UCC4PiXBt_sGA7r3_eUPXAWg\",\"UCJwKiJy-5vIi9im3rLmeU-Q\",\"UCqfm5IQhpMlfeAWMmVL_uNg\",\"UCFjSuNG_RA3-zvlWeheuWYg\",\"UCkmkK1288bJuNQw1FzTuNZw\",\"UCw8cKontnRNeNQjF8kr-0iQ\",\"UCSjnBSU0AaeTwxyeeEjwwng\",\"UCJjua4vsSGIOP6g1y_FxXfg\",\"UC2lpKTvMO_C-o_gSVtT-q-A\",\"UCMY87-eWilbsfGOY7SsE90A\",\"UCg8G8ldDMZ5LdSAEOw601Vg\",\"UCv8h0PwLXjZCSskzf7zOjqQ\",\"UCzGFfbshj0QcTvKtuS19neQ\",\"UCOOyJnxiy-Xnwhf4K1NUwsQ\",\"UC0rSeS1RJebm-qT2Eaajnfw\",\"UCLfCo17TCjx7qf-JMhQioLQ\",\"UC7Sx5q8nw6TjjySTDoqSxKw\",\"UCDwtm0K-nIAsAROUHja277w\",\"UCFpt0D2cfWSrKNPQ-SgArwg\",\"UCZjh_efhCp8KYyQyv8a4oIg\",\"UC0zCF20ATA0z59qvWBYQVUA\",\"UCIZULuqrxwX8bCXWCcN_pzw\",\"UC4eV4IX4Mf3iNpo1SmptKxQ\",\"UC9WxQaySJNp9vxSW5EliR4g\",\"UCd1qZg75vl9kFbDGr41J6WA\",\"UCyfvolACgQ6jXycCt_qVOMA\",\"UC1GY9C0NyIhQvTVJyoQtSWw\",\"UCE5uCJL5mVK5Q6-ZdFQd_ww\",\"UCLzLB4dPDn5nUuFh29yL00w\",\"UCnH2_y8fWmDd1oAkQvFyDmg\",\"UC-fMiCEOj_P9Brinm2SKPwg\",\"UCnMU3D1V6aX1jgL4LGiVsag\",\"UCF_P28Hdnk03ZpLMaAe9iBQ\",\"UCxe1-bnPPVxWooLyxYwLJHA\",\"UC5UK_uYEHKI0xE-nVAeZmKw\",\"UCkBmg5m9KO6-ZustV-_5gfQ\",\"UCWgwRlmfTE_ZyBW9fQqxmig\",\"UCHVQQe49j9nPkrgP1t9U7aw\",\"UCLzz_ExrkgVpxs209W4Gx2g\",\"UChpboLOBN4EdbLtPAaepmhQ\",\"UCetjMFdN7XhAC0zzelMAeXQ\",\"UCT-L4MSL9B9nOOk_WuhKlFQ\",\"UCRVl-qqHxS9TMseoXNi6SZQ\",\"UC4QSsqCA8ND8PRHXvWE-Xqg\",\"UCEwHMzRICb8FTgfejOigo_Q\",\"UCytJrOSLbB5rG6DpZLQ6iiA\",\"UCzjy9_tKooZjT7kpFlqRmIQ\",\"UCPASYoRvu9cuOFJQZWboD5g\",\"UCL0rzER3FHXQMjAziF31wgA\",\"UCwTgc1_mURA251wwpxN_qBg\",\"UC2UnJgm-I3XNUEX3p1E7boQ\",\"UCIwjipGwBV4544m6hwDXFfw\",\"UC4MBqVri5QyLzJtMyESzWkw\",\"UCzf_4aOLL9P1Z4NC9-drYAQ\",\"UCc4d8is-8LqRJWCsFG4CKoA\",\"UCeFo98OGlHHCjLM8TDvZ2kQ\",\"UCsi_Ys6ysS2Z8ZuEawoIXpg\",\"UC8U_BBac3N6zBeI2iE61pfw\",\"UCdqVlWxfZwVUW-JydkffD2w\",\"UC7q5Qyg1RD0Jv2t8WbFx6wA\",\"UCdxWVuRlsJq6RHmKvo5-G3w\",\"UCwgZ5T8-yn2AkcKuaEe0p7Q\",\"UCl7FjaeEnXGpPaDM5OYgOyA\",\"UCYrwAQ5NKlJ7RRWtzlH6Gqw\",\"UCzcZ1HYjZJvxF4Bkt_7XutA\",\"UCb4xyiUOuybhMfU3-ZxM0Tw\",\"UC4CuoqEffJo0lDzIoyTsBRg\",\"UCkaLn2q-qNfWmBAQlpdOWMw\",\"UCD3xv3wDsy12DmahQIQ8hBQ\",\"UCts7hB9DsrcwgeEjH71sRTQ\",\"UCjONnXYF80ahg6V2G1aK5Mg\",\"UCGfXp89wjAj88fPtznpfpEw\",\"UC7kRKajCds7iXTTlDIB-I1w\",\"UCXFGu7TVBJPX5LuHtWu2OHQ\",\"UC60lKb7DZpd4eeaGlkDpcag\",\"UCcz2Ff0k4_R1bV3jZWumXJw\",\"UCFbX4zR1frSRobl6TM5CRsA\",\"UC4bZ1mRTEWXY98F_33ksFJw\",\"UCzAgWNl7Qz1ikKGqH_7em2w\",\"UCLQicpCLlVl1PKKVnREP_mw\",\"UCGexEO32NgSuNtpnzw4YreQ\",\"UCyBvfyHlHdwIbgvxPblQQQw\",\"UCyEqOlYsS_LW_3_xWlKlxqw\",\"UCi7Ec77Vjmr_4ciMQJH2h0w\",\"UCkSUdyidszX6ncUO_eq3Jkw\",\"UCBikVqNhfuOFO7m6IC_W7zg\",\"UCwXH1M2vbb2KMa3pJ8PNNhw\",\"UCqUCV2iL3OeTCLBLm6iOsBw\",\"UCAXMPlYIgZAgqNxFBxVVNTw\",\"UCo93p_gPh2D02FSL9UOSldg\",\"UCNAlIbSjWxrDLDllQUug8dA\",\"UCcXwJCk-32fEuqa6pVmpIwA\",\"UCURZckGq6uwX0yzzpTXkk6A\",\"UCJsOPpDvEyZwbNTHQo56pAA\",\"UCg1XwDf3xuvDrg5mpNCNU2Q\",\"UCTCyYx05OU6MgRzaJ-NLLLg\",\"UC9-uyOguNnDtAzAULtOVDZg\",\"UCkIZcw3FjsK4mQQXRAN8WwA\",\"UCDFnIYZfV77zRgw44RZPliw\",\"UClMz-fCosUjMC4QwINfpdLw\",\"UCHP125buR7vYqgZnXFrIJBQ\",\"UCGxyUMJPlPS4gUuTvTeerRQ\",\"UClhhQ0i6O4bLrQlGHoElPww\",\"UCLvPCiHhj_kv7XY6Kuw1dIA\",\"UCTlryHZt2Q_CXPOGcYpTy7Q\",\"UCxsQAk36sNaeU7eHA2W_Q6A\",\"UC-a4SkGxsiciRTNbWHcxRXw\",\"UC-lzTQAiqw4JZEd9F0dLLag\",\"UCFhkNwgXDSQf6anPnE8vOHw\",\"UChOgas4mNVBPcl9mCfcSfhw\",\"UC9uUC0t7aoga34wTNmmqLRg\",\"UCbI_4TUEGW7eMPtkBN267lg\",\"UC1tdS4wv18szVBO_aQokf3w\",\"UCZ-ECsVN0ExLRKF74MoReYg\",\"UCyhhfAYg6psBJyNOUwE-nwA\",\"UCY-EaEqHVa8gltPvZGQxffA\",\"UC9CNo8yFU9Vk3TTNkqzPF0A\",\"UCtXZNI2L3VEwNoKKgFu82Kg\",\"UCs7_1qf2plPkoUnhylprecQ\",\"UCndm35XsIUiDNJVTI91IiSw\",\"UCOcjS2ppQSqIsbMgWGCfLew\",\"UCn5EO29OZpqazhaYuox-ieA\",\"UCFXW9u9QMRvN-l4PTL8zynA\",\"UCLHzymVFZcotSYZGIh1dEpw\",\"UCmRrFydTwYeFJADtKsRdLew\",\"UCar5Cr-pVz08GY_6I3RX9bA\",\"UCTGzOSPCyvXm-4nx2mKmNHA\",\"UCm74NsN9TZF8udU0OxW2jGQ\",\"UC_BLT4a49E5ec_kbO4tsMTg\",\"UCoiZEHpk3hqkCe4Kz4psIuw\",\"UC-upyEA3YnN2iSKm3P-u1pg\",\"UCt4fXYxgA2meiiLWPLW6VKw\",\"UCZJEhNB0Wd1OhV0Sa04Y2aw\",\"UCEFYxzMzDnI6P2hxgMbe2Eg\",\"UCb2_j0yVyHR-Djxn7gyycqw\",\"UChsYWCL7MFkDM4OsK7de8dw\",\"UCAIrvLzg19ny6ymCUjQ0Txg\",\"UC64OnMVyk4hsSL5r_VgdE1Q\",\"UCRigNDF7E4FGRllAF0rKNpw\",\"UCvLRcNchjJTu-_hcfry87cA\",\"UCn-PJGGTdgca3qDPguaESgA\",\"UCdouUzppG0-QZC_qSU4sowQ\",\"UC27t0JTNtdbCtUXCt6J7dQA\",\"UCaT2jh59YFL-sPbAHWbDigA\",\"UCewo70NVzA1MCcVzw2-dGfw\",\"UCq9_A80MduOB-91_61NsWCQ\",\"UC_ksmeMdS0jx-Ypm-sWKcHQ\",\"UCyTLKfm3CFtP0W-cI9TXPzg\",\"UCVbVLuQTP-EZn61Y0lyuxiA\",\"UComAl6MjIyRzDhMuXXQExKw\",\"UCsEFHuzOYpCKmIJ1ewU-RDA\",\"UCXT8TguIGsrJCb8x6f4ZKQQ\",\"UCIluk9szESfyJGfSF7_sQuw\",\"UCpZWE6XLj-VxGgZRzDYgktw\",\"UCv9VWJXQydKEg8BmVP2J85Q\",\"UCnTewvrZO6bxWBfVVcSKVdw\",\"UCImdunzfbqZ9BoE1VWrvk4A\",\"UCcudwoum60lhn4vInmjywRw\",\"UCnp3AuWeHOUwcEiz5wiOGQw\",\"UCfr110YSlJxvG1QF377bmMg\",\"UCl1eGnncMMtl1UbNjo_D04w\",\"UCiIGEBIMPhPkAAOASm51bQQ\",\"UCfTOTwZu1UcS1R4jpfE0EHw\",\"UCVC_FoeEnoyPpZn9l66y_Tw\",\"UCmCHSxqI2jF3leCsMS9q-fg\",\"UCs3w1cdAHVnOHsbn_NivZzQ\",\"UCU0HkNtbONdymy6u5cPBMxg\",\"UCIHReKgqJqNwCcuN247vIfw\",\"UCS2zfJhlPR3aUy0cPiXzQUQ\",\"UCMwJ-jOINTi8-9BWLU9CvXQ\",\"UCRaUTYDnhzbvvxov1ocdhqw\",\"UCBo3HHxVZO1A8TTjVDMgHhA\",\"UCHkQob96y86qg8Elv2Ar4kw\",\"UC6whuyplYhUcz4k0I7Cx0_g\",\"UCl-uzyQThSda5-VVQV8G-Qg\",\"UCFdqAASY-_wAnT39ny88tiA\",\"UC5gJTFX2mzfar4gwavKAtWw\",\"UCQL0MpH99YaEGWbIbOxZYXQ\",\"UC5dRY6AMYB33QfhPVoTOhBw\",\"UCH1tTlApXasH9vLkvcXEkIg\",\"UCA1yr1rkcOW2u4tQuq4n88w\",\"UCGIXwGbZZyssfbeintUMIrg\",\"UCpdI21rGF-U3fMoTMCHotSA\",\"UCY0tVnGvYPmYm7RbwJ89UNg\",\"UC6DSZG2oCfPyvqh1Q8f56lA\",\"UC-VjQHEpxdWLeyYZpcw5Lpw\",\"UCNQiXvKL-KIvPF1xE-77zog\",\"UC72cAaZGLBqeeSLmWntzgGw\",\"UCMZGiqyW-3MjHhXfrwD-kQQ\",\"UCj3NVp4BAQr3RGD2TmSAZvA\",\"UCKZSB-af6E0_cefHToPpmBw\",\"UCLCo6HB6VM72Ozhm1BZvHTg\",\"UC5IozGAsNFHqqsRkQEscUsg\",\"UCEMAG-iecsm9cf69lo2dfEw\",\"UCKnMcgDLxDeq9HqUgLhtYbQ\",\"UCDRNnUNxa9_gYnL-XrgNa4Q\",\"UC2OZy1sBZt7jUy8ZMm-603Q\",\"UCRehXMGHLrQVvWJtRTMdBJw\",\"UCJuQtclZRe_ON7uztZ_rGGw\",\"UC59NtNS1pJgY220knVlhKTA\",\"UC7P7EVgqrEfrVVfkrkWfcFQ\",\"UCaRwlcHcvQbrfdbTF500zLA\",\"UCfgXcrb259iYPMBT5XRWYZg\",\"UCeXijQRVTQWmaic3GV2UAmg\",\"UCeCDTh5BuDOPgVQkpUcTO-A\",\"UC2On5DN8GQb6aJKA0x6pcMQ\",\"UCZuiBJQSdr2X3ClZvEsB4wA\",\"UCAvdNiaA7V_4OgPr6EYyeJQ\",\"UCUZSCWf_u4Ojn5YK0AbcK2w\",\"UCAEgS6mG5zvlGqN619juUtA\",\"UCcfIbPYKRDjID2SLvps0Z-A\",\"UCcneorHVC7_VNk_in0_NhlA\",\"UCz2SAmBW1T1mJJGJefylanA\",\"UCnB03D0S12082T41ee5ocvw\",\"UCfw6gFZKdXiVmyWMJtsZ2kQ\",\"UCr25V-WUITDdHgeGNgF8Zeg\",\"UC8HMGGjUSLbUHDmccFQQACA\",\"UCqxtFdarcmM9IfX8v1ZlRdA\",\"UCF33rF2JMpfvUBpMyRw2AJw\",\"UC33LTYvNoNvpx7D5qezhxew\",\"UCj6ge2Si8TMKCnZtRbyT1Iw\",\"UC3A9H2RT4x0DANHcRfySLlQ\",\"UCN3w2Wa4MAEECBONKOEUgLA\",\"UCLbLlAvHj-aWEJeHiLNkMhA\",\"UC6vNE3eEF-4hkwC8KcjjkNw\",\"UCdg5HFj8kcgBGMbg2AKq5Nw\",\"UChbg-MC-g-vssVTYW8ujirw\",\"UCIHwyJi76D027pbkzct731g\",\"UCNFmupa7es76vb8BtBiksng\",\"UCXuYnEeQeKPiRhE6OHL7vzw\",\"UCdSm08ileKtHLbyWRm82tHQ\",\"UCCg7vShhcCyRT6Dhm0n7TMw\",\"UCsGWOrW3wSM6U-uMk_wK2jg\",\"UCuqsS4P2s9JZ6g2NnqJ-eTg\",\"UCnEHVSa7uxqMMWzoVUqP-MQ\",\"UCbm-s6TPy8aXSZchTVB--fA\",\"UCG0FxF6ByyzbYHl_x40TD4g\",\"UCju0g4SaSlGdaIOdE7NQRpQ\",\"UCXd9qFZi3xbsYfSkxwiYgBg\",\"UCqWWJ1f4HgHJTQshiqWmG6w\",\"UCR4Ov9-iIQs5Tzegnxd3_vQ\",\"UCFaCqYlBQwVjDam952mBEhA\",\"UC884g-suK78XP5Cx3s3BnHA\",\"UCmUYgKrrfFg4O1izdSjkLfg\",\"UCOX78J0UD_rVssU8x_dKLTg\",\"UC7ZtJEBGWdjF0iRDTiD0HXw\",\"UCFWGDGjEYPo-KCZmS_iKuKQ\",\"UCy3V2YgbG1Xh46p6pe2GNvw\",\"UCfd0Mot5630HSDs90d1iygQ\",\"UCneeTS_wyTCcIOISH1Yq55g\",\"UCyNo7ckRKdRAtFjlML8JIgw\",\"UC8B9eNWlA6ugo3j1YzJdmiA\",\"UCgCEjNY7eylrIVli90U9lOg\",\"UCKhjPU1qqWCNGaPKVZE0bHg\",\"UC-sn_OESFhJ5huTwtp6MqKg\",\"UCdNQMlMezKhszuHwaaqFa_A\",\"UCcCq86XXw41aU4M9GS_9kdw\",\"UCQJ_594zdkEtwnKL7iRc7-w\",\"UC7WLRw8wWr2vXIhPwvpJgTA\",\"UCiHjVNdHlrzl4xjANBzUjsQ\",\"UColKUOP6SCJE3faK4yxQWzw\",\"UCewUETrgErKOtd-TIV_R0zw\",\"UCvCKWFQRaS8xn73DHlPWrPg\",\"UCf2QvOvnkOGnVUBTNPEmyhg\",\"UCJHm9BE6rLXa6UdbpZaY09g\",\"UClP9iAYzQpnEEkuntf96sEQ\",\"UCKUmx6WHWz70i7RbEdlEiZA\",\"UChfVp8iHZyEi06A7-suW71g\",\"UCKwuT33s_WV8oo_Zf7CzJCQ\",\"UCIQL585dHJeHtqLnUi0-RQA\",\"UCg7pEnufOG_PAQqv7VK3phw\",\"UCTOE3PROJ8kgN3RMDh_wXvg\",\"UC5-2aGOcunTzpLq4Pvnbolg\",\"UC2PtEwwcojYJ6uNmKi2qR0g\",\"UC7qB3sV9wWusiakqsXGk6Dg\",\"UCLARmUy8hJxvc_V4__ZArpQ\",\"UCc-Nvq1SYmXVTO5_UwQbg6w\",\"UCSsjbL0i9ZO28k8flFR2zCw\",\"UCV2BAPZgvwjJO4QMxZZq1Qg\",\"UCRIafgU7_URCZXt6X9XMbAg\",\"UCOvejtRhrMj1dGlRv-S7mXQ\",\"UCLDJvxdPz_8mk3gOBwKfweA\",\"UCJTwI-poPqq46asRTpdbXWQ\",\"UCFWmtl7o5shKNcMf4fFGh2w\",\"UC6EpeKg7E0RePSwB5ORP9cQ\",\"UCEEb0oEq8Ax04CgTXQkzSCw\",\"UCg5pDMVn329F4aGeqNlkoPg\",\"UCMETCZy3whHHQZJWc5x6Rkg\",\"UC8GUljfy1oBbkZ3436FE-qA\",\"UChXFRXxJ1PTZgpR_qL91T_Q\",\"UCTVMZNEmoUE4ngvRDemEGvg\",\"UCeVIHyO9AK0KbaJpGhO1ngA\",\"UCii4gP8meoVuQpoZerNAc_w\",\"UCmM_hSYcVC56x5rv3UFlOSw\",\"UCthvD9UXUTBHmY-0wJhAlrQ\",\"UC0pjfx6qXTDcRlR9bcr_VYA\",\"UCjahvMg8Rzpas8_I9g4dvvQ\",\"UC5mmEjkmG7q8SeP2LwQWr3A\",\"UCH25QzGyR3c0i7krBlx4W-Q\",\"UCMMbl7Tt6Zy5Ho3W2bw0BfQ\",\"UC7S8hk146TAQQUN_mC5QxDA\",\"UCB0zxJZkEkb7TH6DdS-Fe_A\",\"UChb7POYF7Nh93Q0wCbducZQ\",\"UCi6JUOoQzRJPIR41GhA58zQ\",\"UC57-tcDR2kQjOc2E9Hs-CSQ\",\"UCYMRL0xitqdnXOIamDfwRJQ\",\"UCXfa35Y5qlElyka21ykfBvQ\",\"UCwONybZQdULFV_ts2911Rqg\",\"UCW228HMdwaw40OttCD1Psxw\",\"UCwyfmE9r514E8X6HhYK8gqw\",\"UCjzRMhrVHZzw9d0kOzybVjA\",\"UC7uzqWBC3P6eUd6xdcQYuvQ\",\"UCxAZK3WoWfK_O7QQnuD3Bng\",\"UCkU_pOw46kwsrzcdzfqE7UQ\",\"UC1e1EJUOVodyCzZ0WMRfotg\",\"UCi317Q_IZEdfGiguZF-aw7Q\",\"UCX7fsM42o3-EhJKDAGp2xqQ\",\"UCJzheUMHI53Fhss-_Jxnlcw\",\"UCQ_DcgEXcmhnCnr6hAEWp1g\",\"UC2kA_YZwUMyHUGCXSO9mffw\",\"UC4RqSvmfK2V93I7NkWrlVFw\",\"UCuPVo39xEYJrbRnlPWRlxxw\",\"UCjMq9DMkZLRnkV6zllSPbUQ\",\"UC-eT7qWZk9enY-dl40ai-0w\",\"UCNp0hk7SqNRGvyVR0zrT0aA\",\"UCcaOcaUhB-OJY0K7K6IOGFQ\",\"UCBb0bVF8y4LUHKSAl1HvpgQ\",\"UCp-8fCA9gn43i2q9AnJJTlA\",\"UC97oJIQN9Hc4HQi87cVgsKg\",\"UCuv28o_bF58czBgUHk8g0Dw\",\"UCE6tsd562fhlJtPRo9xlVsQ\",\"UCajn2OEbfRmdHaEM_h_q6JA\",\"UCtoKVZI8y7HGtMXrOXvJ7FA\",\"UCCf-eksUqCDzkic7y8V_wgQ\",\"UCJFMyGShAhvXEcNQC6vXirw\",\"UC9PxIgxddlHKNw6WigmzhCQ\",\"UCD-6le8Si0V7CqGO0Ck_4LQ\",\"UCCJ9UHNsmWplr2TwilQHjrw\",\"UCubxEhRi56_V4_eTzzcFwkA\",\"UCCZags0-p495v3laBYEIlSA\",\"UCSsKFPykz7mhmaRDjOfcREQ\",\"UCUMl7Lrktn0-tqRsmPq1QYw\",\"UCVeQv5e13N2oWPhIo6gIs6g\",\"UCU1winVW2UsA9dwAL2WsPlg\",\"UCl5ryvNf45zjJeIAWrWr2qg\",\"UC_crXgXsjLQg-92Qasmj6dg\",\"UCvcrfwbIR5vuPWN399_cfEQ\",\"UCMNOE1vAmtXd3hRQaFViV7w\",\"UCoULV_VVkGD5Z6FnixlYcxg\",\"UCD-nY0o3fbBQAU-W9oecAaA\",\"UC6xhawZf2I30z9kAgqVEIvg\",\"UCrnqczTX6VeixnjIveHOJJg\",\"UCvwmPz-Pl-aSi-dhk4LgTpg\",\"UCLBVBDg902ig2U77EIH7Cjg\",\"UCFGCAdLEHY8C8hN5ble0gbQ\",\"UCV7_wk8pXLoS1wsBFvWSuzQ\",\"UCW6wto-zyHY5igqbDKsJhLQ\",\"UCIg-4NeNrY0DMUORXFmaNQw\",\"UCXV54jIRubZbD0Yslch_nJQ\",\"UCnD7qMT-ymczMl7DIAncZZw\",\"UCbF4Unh8QYZWLO_s5aNlfZw\",\"UCVs-kxMQ1Bb6TSoh4pZHwDA\",\"UCLb09BPgh7xrswJRgYQthuw\",\"UCnLknif-nAvD_5Hmiqh1BPg\",\"UC-cIKRitWL7zOEk__BIsNuA\",\"UCYhcXzgTL4AYPYk-9bdlI1g\",\"UCMBq0Z_RvCl372A0FeOSJTQ\",\"UCBzhTglq26CbJg_uC_CAWvw\",\"UCdqAE8poh9upOsPVu53JQIw\",\"UCwe14RULLmbgOXaVZhegvRQ\",\"UCro5_W4kGwXNDnaY3HQAdvQ\",\"UC2s6WVxG2PEaS2Ia4zIg7fw\",\"UCY41uxUipAWtvYNDbpkXZAg\",\"UCmEKnMzbltaFyiA6H46IDng\",\"UCQO2xcho4e2QOJbuMCzPigA\",\"UCzVbO0B3bQTCaAcge0Kfzqg\",\"UCECwfSzGKSaZ5hup8sj9Bkg\",\"UC_g73GNqsyBWvEehY0lNZBA\",\"UCptKEsxmbCpI-cBfNopdegQ\",\"UClJsVoRWiziJ8yjxHDltDyg\",\"UC84XtIGfnuHTMM1eKUzxKgw\",\"UCDPCLEPOgmiOoImKBzRQrdw\",\"UCZE5espnlDl2dDRXD2XLMLg\",\"UCyAEDhpgmSCHn6fs6G-AHhQ\",\"UCfjSmWthtRhy89jV3a2yPJg\",\"UCIeL1JF5Q7ALE1qOGPJBm5w\",\"UC8AyKMH36NgWSK9SgJzVYbQ\",\"UC7BsIosUdCz1utgm1Df1y_A\",\"UCsU0E4F3RxVOSjWlIMieReA\",\"UCR3dqK0RdUSJQvpIPE8jh3A\",\"UCLrR_PmOW62PYzQacVTStwA\",\"UC-4eHsrgDjSmO8EaOUwnSHQ\",\"UCMwiyYqROWiOCPoKEWttmxA\",\"UCMDA1eds3Vx-VCh3kMLDwjQ\",\"UCj3jEZuLmXOndQJFkPTp3Nw\",\"UCV74rV9AAKqXERWwfSP_Z1g\",\"UCgnoeF7sXIrbiclgaPKA0LQ\",\"UCDC4FQedDCKu6RAmjyHZnow\",\"UCT_yAgNF6xfngUONqx2qYCw\",\"UCWVhR4_d0cQBIFfagsvokuw\",\"UCsra3f6ogpXhIZbSUe2OoaA\",\"UCeA7jv8ByReLr8Zj_pNjmyw\",\"UC7Hf7EaW113SpNtTD-qleWw\",\"UCLqXb8dvV_I5L5ZCME5KP9g\",\"UCGRw8yf7DFI9MUeYowEWq3g\",\"UCS4nITN_F18O9NW4l4P9_Tw\",\"UCxWG--BFb-4hDeNgz6S2r-Q\",\"UC5cWoQwwr7j-r-Uh0yqmgiw\",\"UCyNMsxEnwt1PSs9JMl8_ymw\",\"UCzk1gG0jwZlpL5lS0InW9TA\",\"UCkyqS-UUY5LCXG6wja4xWlQ\",\"UCZQUYF9E9KdllbPaEPoRHSA\",\"UCdnQ783VFAvU1k07Y_IgKcQ\",\"UCcPGODw14d7UybyR-BVO4Qg\",\"UCfLGzBHhxH9HruuPRLF6pjg\",\"UCw4-Dwu3x6_6UPxSoDvTf1g\",\"UCafawrkuItVK82zDTy8lq-w\",\"UCPgdSF873lbEObhyaHsXnrw\",\"UCvhB3FQ6JipvNCFO9U4mXMQ\",\"UCRVMzu_4gmFo63cJTb_14gQ\",\"UCCIjlXC1fn_uaPkT6YO3k_g\",\"UCEhPT-_Zya58YD72PjUiEFg\",\"UCFCVCR2U8esOaS5YZH70T9Q\",\"UCQ4imW50ymEBRwmk6KtjEWQ\",\"UCA1lgxPmVoXA43GK32W6AtQ\",\"UC1zMmXgZ6wbCQBae38EFDOw\",\"UCDDt_IFAVG9OhDnYxj_Dg4Q\",\"UCu6XyFzqmiwA3AAIK9pS9ig\",\"UCzkSf_mazjzJ3sZZobmim6Q\",\"UCkObfi1igqKtcgDf8lQXD1A\",\"UCoO3WQopgyt-E-MCG88SLBA\",\"UCL3fK7HU5WKfBZ_XeEIAa8g\",\"UC4dLh8EcYEM6V1V8BP8XCNA\",\"UCvZ12XhDLzJBJG-YkoE6j2g\",\"UCZE6hf1-mMhcYZS0mPGNhgQ\",\"UCH4-OF4tdWMnihID-FJCZbw\",\"UCTXsVt1wjiVQdAYaNVHTLpg\",\"UCV_y29TBSzu7ssUwr7nqhCA\",\"UC5Z1pcn33173eLfQnzzNK1w\",\"UCWfgnMis8u-NHrHJsROeWTw\",\"UCC2Wxly0a_YUXiya8JncGRQ\",\"UC6nbsreEQZ9HvUi8lvkKgNQ\",\"UCRZA5vSTCr640c136-GT31g\",\"UC69JW8XvnPjXZfysWQqOk4Q\",\"UCzE13ULG1cRz9bdeTNfV0gA\",\"UCXVoh_lRU1w1Y7Rl0-KCHlg\",\"UCS0xMVWUxkKwMmhOHFPZ-Xw\",\"UCkvCgQvyY9m-V9KZUWrSsHA\",\"UCyXtx1C96Lgdplqahdaukuw\",\"UChSf78Cgep9tOyOXyf0yKTQ\",\"UC7dp7z4bM_8GsXP6JROSQzw\",\"UCRZB0qxg-V11pZeLEmsobrg\",\"UC9EmkmXO_7vfjx5C3A9TG1g\",\"UCovD5sjBd8Nf-DH3khxSEJA\",\"UCcuLEJUZy4jo9iFvngkoBUg\",\"UCv1tfYIqE0WAPN_TLWwdYPw\",\"UCbfpYGPzXf1QjakNd-hpfcw\",\"UCNL-yDsEfTUqGuvZ6Ca8GbQ\",\"UC3DCmldYel9gyzyR7PDj81w\",\"UCsW6HSIVWlvr_uEonqQBx-w\",\"UCkLMh_Z2c3HIcoTfHWZJtWA\",\"UCzsXMZvvpWkp4MlrvXlPIpw\",\"UClSBFYHrD3aEv4jdvqetUYw\",\"UCQDsFBdM-KgDYjuNvpx4yug\",\"UCmv3rI2yhyNdqy7GNt5e13A\",\"UCpCyYFOqCs2w40abV6z1LMw\",\"UCwVlcFWgXIFqfnyL1dgxe6A\",\"UC6ry_PdArcovE24onXlOzJQ\",\"UCKHhzDLNlNG9gr9dnXV_FIg\",\"UC7FkfhdznZ7O0iStPMW081w\",\"UCXFBwYjSSkx5AQdDEiOr_Tg\",\"UCqmF1tpcUZkPQ3trYq2P8gg\",\"UCri_HXiFHtyU5DH1r_84zuA\",\"UCgGb-AQKMhDpCO14KTCHKrg\",\"UChnv-ecjq1oOfiGjDgsg6ug\",\"UCK57nhHfyxdK5SIbirU4Ntg\",\"UCpgAYhlybOiEezqB2fDDJMg\",\"UCOKSOW5uJHdW7Edz37mvAFw\",\"UChon-QejjqORzT5lbsz5C0A\",\"UCCj6Zag7JKm_Xjra-u7c91w\",\"UCFOrH58QEj9ELY6Sj5EeXNw\",\"UCO92ibAcgOUXJYuL6HlX98A\",\"UCoja0MNI4SIvXqJR3szbSfw\",\"UCrgK0AtFot-QfyOk6o8thsg\",\"UC6BvO3cAcj48tfppBeMNRXw\",\"UCp5TGGr_xGWnIunEQal6AKw\",\"UC21iUIX1kbwUhxypjHuKcjQ\",\"UC5gRk4M-2YBfTK3r5EwUkVQ\",\"UC83vMcppCU_cUpqZ1F2q8eg\",\"UC5pArmW-JTQGfuvBQ31tCtg\",\"UCwAzsOxZ5dJcHbbGnyJO36A\",\"UCEbidjM7O4cP5ZVtNYe6eOg\",\"UCe0Bb0O8b7VaRcso0TkjPuQ\",\"UCoV04x8FjGY0Nz1kNq-Ggxg\",\"UClNIA-O2ChZ0U_ttxJq80tg\",\"UCjUKlN8cBi9CO8j2K-0gGkw\",\"UC7kPsfxvzURQheYoIJO1K9w\",\"UCZAsARUjQZLira-SVIEr9lA\",\"UCQVGpvqkT_VI_qKg6MYqeWA\",\"UCNmBNH4dzG5rSKowOiUNF6Q\",\"UCF6VjYfikYP2vfUx3c6GvVw\",\"UCf8WsQ8BdcrLGbptZTQz6aQ\",\"UCyz9jzl0g6F6G81mFupl7Jw\",\"UCDSTRHesIl_7As-fKsvdD2g\",\"UCfR3AbME-4DOda_N8Ll4O7w\",\"UC0Hsmrri1Xe0dUXR4Xz2oyw\",\"UCjFpTYwe1Jy9z_CMxGjLwPA\",\"UCS9gDYQ0C0zzvKU1-MluFtw\",\"UCZyDA3alpnGU5Sh0-XAfAJA\",\"UCvONzA-juYE_H7cd9MQhXdw\",\"UCefxh9MfWURhoW4g7zXiTCQ\",\"UCeJ7FqZ5ZIlpi26Lird_SaA\",\"UCkFxPZjqb90xw2Vbn9GaHyg\",\"UCYD9sh8V7fsAJOBPjjk6VtQ\",\"UCOjUlJ4EpPxuhtT0zEVw25A\",\"UCnvUm8EeT_5SAzEth4LVRGw\",\"UCoLE0LNvGhywe1N06yxU4HQ\",\"UC-7p90PsiW30dislw-AqzkA\",\"UCXPPppHEGxiGCJaVFCuP7fg\",\"UC2KY3zEvXbkp-XIrCtGLuIA\",\"UCE751T3cg-VUdb2OvSHhY1A\",\"UCyuA2FeF2lRhA3V8DU4Htlg\",\"UCo2oxam8zdyCGSGxSOJmGHA\",\"UCbiitLMjYSNgcZuNHQ_l7Kg\",\"UCgKFOz_KrMbmypWrawtzDQg\",\"UC05dV-P9QAppHbDcJ3rkCMQ\",\"UCOsOiTeEkV8nPOKA8H5Hq4Q\",\"UCt4QF4QXie-S2QyVdjmuNYA\",\"UCjyoMpLo_BlrKBxp7QPETPA\",\"UCcBm4A6eO1U_W9WlKq_lthw\",\"UCPRSOGZBwFJOwRku4Yoacew\",\"UCu6kJSMJ7gHkIt2ENv8B_bA\",\"UC-P9JGo_w63UR4Q6ppHmojg\",\"UC7shm8XttleSZAm5SOXXj3A\",\"UCXFy0floTAxRv-YvrpL-bkQ\",\"UCoe_4f3fkLE-GVA5by6446w\",\"UC_n4rC_MIZVtpKHmtIc_QbQ\",\"UCMBl89JY8P_C5vNDyURCPew\",\"UCXOypoKGcjOW4_ojivrQF-w\",\"UC1m1ZZfQYChRZ3aPI6SqZng\",\"UCQOLpqFyX4OUy1UpOkGEZZQ\",\"UCg-RWoeVKco1P-wfYvaV94w\",\"UCOUvCO1dVRqkDpVVKsBhC5g\",\"UCmJcHa2xi6PCjHQZ4T0wBvA\",\"UCX7IvYoRM5ysHb7LVZCnrog\",\"UC4_9J2jsqi6HQC-3Zw-Nkxg\",\"UCzjU63u3CJuyNA5CBBsS6_A\",\"UCHc_8OGhZWDrtuMQj9VzCZQ\",\"UCT-aTIiJ1-SdewX3Fyvm2AA\",\"UCAcm_kK9LeKsqntNX_5J9Rg\",\"UCBuShYE49tcR6lJg8oKs4ww\",\"UClCx7sfEH13k8Fw6KvwOoxQ\",\"UCOao1btkx2cy84Rj94CsZ0Q\",\"UCMsmmidtdj4H7cpk5Oh7fsw\",\"UCI88YBkUa1nA8u2U1TfG-PQ\",\"UC6yRBiQFAODGoxrWcPokqcQ\",\"UC03TCdrKqLNXnIJhjLKxbpA\",\"UCFIYqXPTUCeafRMB7f96-lg\",\"UCuBFSkC5SDTBLesmINibucA\",\"UCnvVoAUlmljcetRMyQQRyUg\",\"UCiwshE2NnAcbxZTpbPKWrfA\",\"UCR6MXpfFWbOpNlxuhWCBV_A\",\"UCwSeODgn7xfRrO84XoWj4HQ\",\"UCLW51-XEzuOm5RwPMChHBMw\",\"UCq64wanXdv2XIiLp4k3h9uw\",\"UCekXOQXPXh2JXv5EkQB9MRQ\",\"UCdp7LxWEaqCoo4jReRlm0yg\",\"UCxsjItE8ek_KG21BClqBo7Q\",\"UCvDqylEzCZJHNea6k1XMkQw\",\"UC6F-t3Qvgo2zMbEGICLQYIg\",\"UCva4ibMVTYRD1ORrdKJloTA\",\"UCsCqRER7XXL_2v-xRciGkLQ\",\"UCTtEwKDNTnov5xyWOBbChRw\",\"UCIeyGx8w3JIwVsH4f3iFp2g\",\"UCHZgC6KDT1UPEN2ksnM0omg\",\"UCPkj1S371cu_1z31p2qBbVA\",\"UCh2dUscw6zM-iC0w_dqT_og\",\"UCauE-yGwb8bJ55BswgrGxAg\",\"UCJmo4dHKOA84FAUt9_oiVVA\",\"UCmOh9GyFRLrCL_aYGcaj6dA\",\"UCRGmWAhfqVzuIh6L87kUzCg\",\"UCfiVoZJZOejWGlLvADb9zFA\",\"UChhw6DlKKTQ9mYSpTfXUYqA\",\"UChmSilxBdBmTRPTJfgbJ8Dw\",\"UCZMMZQodvO_wskiCsruhegQ\",\"UCh7tq57f2hlqDRBsNPrzOBg\",\"UCMPHtaJiM5mD843u--d-cFg\",\"UCDqfUwybgEA9Hg3P32G4Uaw\",\"UC6V_gx5jBDS6dAC6-ywrbhA\",\"UCZCYjHOYYeK_im1Se6YZj4g\",\"UCE8Zhvpxqds2Ef9K_7walIg\",\"UCNdEQOJlmDfDs_Ns8BjDGYQ\",\"UCDfiyaqMTJBajkFEBipBJPg\",\"UC3ch9lTrtYjeYzq3aDIjwLg\",\"UC8oGiHeqsu7lBG0Y8hZeS2Q\",\"UCbVcUVLjeMiWScXlfYKVjsw\",\"UCuJrsLl53AFaSbeT5rFkZDQ\",\"UCwNzLuoucAvxK9a3CyqkuyQ\",\"UChjtM6NKdYefRQZFNH7XWaQ\",\"UC0gx-ZKm0qoMwELeiumI2Vw\",\"UCmeV01P9S5yncJkJyei27JQ\",\"UCXvko2fvOItX7-YEA3OH6Bw\",\"UCjzy68yzcUJO5fLWjjqJkCA\",\"UC1G0-q7igX161GYJol7h0Pw\",\"UCqap-zMsOV_9tFRcfE8yqSg\",\"UCkEnNguHkUDmxk7rTyre-wA\",\"UCAYsspsHhkIbwNLUPdujx4w\",\"UCa9oCHTtspcILFwCfcIWZmQ\",\"UCO1n7oU9GgL2nLv7_d9rxuw\",\"UCneNuMawbfqgXCew2EdZMcQ\",\"UC5mr_y8yvZX2a6u2UfzRZAA\",\"UCtBkVoxA7sNx0Y3Jk3Qcq7w\",\"UCpvnG1CRL8cqFbR_dZYpp5w\",\"UCXJRIcsAn9inthRo2LkGBSQ\",\"UCg0q_KigPoCOQcAzR_iQO_w\",\"UCOtT5ep1KQx_eUGTxhg6shA\",\"UCO6C6bZNETT7pMXTXRTd-6w\",\"UCW1VEdRawR4AkwDDPsBSABw\",\"UCrvoFWsCASGgWNye-F3iVwA\",\"UCMA-ZzWeWAipboxxBRjzedg\",\"UCnE7H5NpfTtMf-LlWag75QQ\",\"UCoLrVDE9zIvHVAlutzk7qMw\",\"UCvqaj0joVE2A0PwALIsON3w\",\"UCLuyixD5bOc7AAmJ9uoniVw\",\"UC0r3Fkdw59yn5PsjHgB-ZIg\",\"UCwdlBmybekc2tBpxrSbSx0Q\",\"UCro4v94uhppDM4Yykc6wd3Q\",\"UC7biUF9zCSHU_yXWbpCTE6Q\",\"UCfpv91g04FgdO25S3lsZjsA\",\"UCSSmm4D_TzGTynxocoQv9lw\",\"UCygklH4KxJ7SOjSKhhZ76pQ\",\"UCAPorptMKn5No_A7wdeXnSw\",\"UC2Hi8DPGEzSihX8ZZeJylTg\",\"UCr2Fm-xQtNfdhPaRcHVpnsw\",\"UCaJTmu38lsC0_ZM-xaRHeQA\",\"UCYN4ApBALWvXRGMsakttmvg\",\"UCH3cq9mit-0UkTu1mTki20Q\",\"UCiGqHCc9nHOzZrCULQpfHzw\",\"UCJF6yNjgORRQ5Ft7_v3saww\",\"UCl-5oPIbTAwLZ0hF_dCUyLQ\",\"UCSP-Zyx0O16EdOMrt8EfP7g\",\"UCQEspy2Mq6zLAaRN8IZm2Ow\",\"UCZDVnGEyggjuo2kgpmXdzGA\",\"UCYvI3mWCvFqQXeFOJptIULw\",\"UCgbXkggt8Jo2hFXsr3jTuLQ\",\"UC3VLy1MHl8EsF_zcFAuuoOg\",\"UCwroD4k2RJTCx0gCEEoI1xQ\",\"UCkSLAYplobH42Vripj6xxzg\",\"UC_xFQMLyhi_aErUIW4vsjNg\",\"UC7I-PB2-pXXoi7FZ4NjK87A\",\"UCBgYMaTBbXgaP5YsEDoShTg\",\"UCkHHq56yX82CtV_kpihj9lg\",\"UCUTH2kX2IYACyz8WO7Ple7Q\",\"UCGgHFfFhdad80ODtkYB3Eyw\",\"UCPJQr9s6o36omP4VxJTbi0Q\",\"UCr4Y8Yi1EXAE-Ck-UQchpSA\",\"UC6PpjezXs_gRswQtqlo0bHA\",\"UCnagtdu9MZS-bHnWEYvCuKQ\",\"UC0zqIsvITEc15jecBfU6GHw\",\"UCJBO9WgO3nCzbCzjr_zZpfg\",\"UCbwXj8-D6tB3nDPnOjF2RHw\",\"UCdsG3oYcpaxIZNm_Vy_nMxA\",\"UC4jROkPjTvnXRkuo2GAwKXw\",\"UCX4CzvDT2l_eV_feywEM0AA\",\"UCAosAM5w9-qilw721W_wU1g\",\"UCvoUUDmUmeiJ8R-BTi-aK2g\",\"UCP3OzsCj60Z9kZlBPOFXh9Q\",\"UCznsa051_WjaMadnjlkqkzQ\",\"UCts283go0frQDLzgfnL14fA\",\"UCoEPRA9ab07aiALcpyTfF6Q\",\"UCvaUAVzIIGsRNlUDWkQFCeA\",\"UC70_UC-clNPyEpU_XEiu7FA\",\"UC32sdzk729lRo16PutQhZ4g\",\"UCetnir9iUloCOCEw_d_3u_A\",\"UCUM3rSL82ItAg_jjglbZM8g\",\"UCM2SPAHgUgJiEyNW4n56d5Q\",\"UCY3QMoDm3kcfxjLpqLeLspA\",\"UCe_DN7kH6urn-1DGZPLhBlQ\",\"UCJKzyA7mf4L6CtdNuRFExTw\",\"UCf9CdAgj8AHmpMwyoe67w7w\",\"UCNaIAElKPANu-d7ysRpLcUg\",\"UCQ3PHK2ix4iyoGo8PT7GIzQ\",\"UCS7d_YRUnjOBxAw_QEqvr3g\",\"UC6s-NYj3aFToHDLe2KAupxQ\",\"UC3kf-QFT6FZzDk9JsPg8Svg\",\"UCrYRsyvLgutlow1OWIHnJJA\",\"UCzTvyTeyPh4mSPgl4WfDEvQ\",\"UCu5ZOjEN1L4nTyh00FN_VJQ\",\"UCJnKVGmXRXrH49Tvrx5X0Sw\",\"UCQEMadPG9uqXNUcDeGR0Qlg\",\"UCxqqxhR7GDd3vZbivhzUcmQ\",\"UC4P0hCf3ZKGiiocjKJEsLog\",\"UCtODxUNvdRVT_Jlgx0SIDrQ\",\"UClC7oa75Sx_6iYjByU71Oyw\",\"UC_F3V4jizoHbQq5dUN0WNQA\",\"UC7G5hDJn-wZNl5fQnALWv8A\",\"UCWUHN4UB7uryQtmlUARNILg\",\"UCp3V_2F4l8_2moPPmSx6vng\",\"UCUNQXHzLc7gS32NSADExcMg\",\"UCuTgOHWjMls_uPGT2wbBI7g\",\"UCNBy5ihviQB-4AYl7q_2Mvw\",\"UCskT0JUTjD76o2F73epbLYw\",\"UCEm8IOrUct3WNyOdypiJopQ\",\"UCo8o9gbESs8ea7EvG8Unu0w\",\"UCyrxl0hWOjpXOkm0OwmAwmQ\",\"UC4UjsC0KnvjzRqdM9R8vLng\",\"UC7yCohxg5xlW8k0sa14rdXQ\",\"UCPKZrWKhJILytzjACeUfveg\",\"UCJWqicDceJNSY0yWHZ9UCgw\",\"UCLuA1S2EnbjB0Q5zOOMqeTA\",\"UCpR4FjXJPaEOG8-gqteilTg\",\"UCQYqfDstSDV0OKG1OfWQqJQ\",\"UCl6LqaObnsZkMgWzLY1GhQQ\",\"UCawdQwVpEcbcVpEfwAmbx9Q\",\"UCpd24pnk0c4OPN27abvNrYg\",\"UC2lAZTmnvOqqjIzHdFfNN6A\",\"UCZtKMN6RWg68gBczNZ-HS9g\",\"UCKiYViLBbMeSE3hFkD_nALA\",\"UC2PRQ85bVFIQMlid_6a4VvA\",\"UCQo8UTQpO2w9dJvPJQb39ag\",\"UCh4C9dDSN0OcgzARWPeKRlA\",\"UCjOC6rdEO7bB45Nxug7KsQQ\",\"UCtEQTzyTGLhOzmkshaI1BLA\",\"UCYEz3vPWPP-oNtkKb4DxoAg\",\"UC6JW43uPTidyWM1CTCswpjg\",\"UCXa8Abtlpwq6aue7VfcfHmw\",\"UCqnVLoy1RVi-IgRWS4r8Pog\",\"UC0Rfk7zpX5yDmjjCgLOtyiQ\",\"UCjvvT_wJypOe8SDH9PSWIpw\",\"UCb5U3jiIEJwR2DKTxrNYRZQ\",\"UC8MJPNIe4Zp90IJ_seXT4fw\",\"UCW0tN7v9ZvYGWNJkaAylYQg\",\"UCfSdOdcvBOiYt_Bn19pAxzQ\",\"UCmBgY4slvHnFRJuF8UwmEtA\",\"UCmU2z362V0C33NK-lpFc2MA\",\"UCuhMLILU0VtdRWHJnsI14Eg\",\"UC4_iRs7tY3yrTE46d4FB6Iw\",\"UCEdZf4ePGVZ3tt2ImBnqVRA\",\"UCfMtuQXoaH5qVCMASAc1zhA\",\"UC8WkcMhUxQ-Ij_r6tlzuCiQ\",\"UCbpIpsNmnqL0RqCWs6rltTA\",\"UC7rgrKTSF5aOrBGWOw60ovw\",\"UC5Zb0kZHy4aXCol2xak6UFA\",\"UCyN4hZSBQ2ufxz9LcsEOpJQ\",\"UCNndV5VKas21JsJfAVVftSg\",\"UCMz15G8vnjJbExRiQCAbkdA\",\"UCbA9DiB0hmtQTd-_nJywh9w\",\"UCyFht-nV-G53A9_4h8cMcxQ\",\"UCerfdW31QYgqkgKW4dD5amQ\",\"UCcwl2eZQCFLXI2I6f-WF23g\",\"UCA-d1-BX-xfZAQM_y6nhO_A\",\"UCRhL_NOLgY6XMLcVRmle8sQ\",\"UCVhkf1Oj8PLPqJJDF3XBVeQ\",\"UCcVdNMcv5OU-e4E7GjyH8JA\",\"UCce1ksSOURj-GV9wToIz9ng\",\"UCb9T18npz7mTyW5FZ59Ki-w\",\"UCggznTo_ZOCKvdGPUnnyJKw\",\"UCELxDipAILS-6sxrKYfFl3A\",\"UCaAtmNTiaIWTBR7jEVKwGMg\",\"UCHmRy9661L9AUSeEzq9JsJQ\",\"UCCu1m5VnLyUCBCaO0lkb0bg\",\"UCPFf6CSGEsBg6oKucXOQvXA\",\"UCkVA1ZPx0rcGge3Fp6CIGSQ\",\"UC48vKwuSntSFfTjRVxtGbnA\",\"UC468f1rAwNdCCmCURXHxdYw\",\"UC6Tj9T94qKjKCNncVyjYZ9Q\",\"UC-9-f0CTw9cTobMQ-c_in2Q\",\"UCSoFRYBaTHeVvs91atVKEGA\",\"UCUfjqJW3A_xkdsHo1IgUzYw\",\"UCJIr9mCqgMtAj9Wg5mWizDA\",\"UCwoGV0-LcB7n9jUcLcXBiOA\",\"UCfBMPuvJbzXJtVBD7mB6SHw\",\"UCtiWDSvsxLmUORqSk-qtrQw\",\"UCkM2QcOqysch37mGzdYOYww\",\"UCX_WG3z8gV0gqdz3ehGXX3Q\",\"UCNRjTbefVjhD762Z_orgQ7w\",\"UCcMQn6WcjKhN87vUP-PQbgA\",\"UCdH8hRLWGTD5WzdNklJ74Jg\",\"UClVE0-ABsBWGkHn3AW-jbFQ\",\"UCnZPN27yI2Fv9ysfDsQe7RQ\",\"UC869Xkvzu0db-rOur0AmFkg\",\"UCgrB86pIBXFhHi7jzBUdfEg\",\"UCtmAHAzjzZtEUQQn6VbGFCA\",\"UC_RTwD74PzexH4eddlEJN4A\",\"UCc3cJwdxeeM1cWia1cC3j7g\",\"UC7vIOWvsGpl5YXZ13mvaZDQ\",\"UCgkkz9toaUDbaJNftKmVZEQ\",\"UCV0HCXgGwY4qNSax1AlBKbg\",\"UCqblfZb5w3TiwSITUY8G73Q\",\"UCGsfovinEBZIPhs19pxAuKA\",\"UCDYYGdKY3_zOk3L0VBdx9XQ\",\"UCKeX5S-OxmYEB8OHYqCcXTA\",\"UCOG9LZL-L_VvU7rAamcrtXQ\",\"UC1DGf24XZoRmCWinGXanSow\",\"UCh3PET_jPyknK6HN3vxDkBA\",\"UCG0j1e4EUx4XLEE68TRjrHg\",\"UCskpbYH8HU8Kh0wcJiL4moA\",\"UC_8C6VZiJgnQ4YOlDtPj3jw\",\"UCnXRqlx5gdiHfUXYjFy_SRg\",\"UC-z7hcjFm5CVOejhpnGW1hg\",\"UC7G_Zhe7J2ifjb81eXZLtZg\",\"UCaTiVclf7mD7Wzbbsm6gGOA\",\"UCTRVlQTzYPK88F8saQL9TJQ\",\"UC3SM9NvGBMpDasQ4_es8XXQ\",\"UCY_mRx1CjHg--e-hSAM957g\",\"UClvK_c0eubODjD6qxoiiKnA\",\"UCMxtDMjkSes_hGHhP_r5qBA\",\"UCS5nw6NH3IOAEHGsdONtFYQ\",\"UCLXByGIaU9CREAwuutg7kpw\",\"UCVyCgtmYMa3fy6ZKIXBiM_A\",\"UCW96KcknFuSZuQnhY7MAB1w\",\"UCk71jfJlrt0ZxjME-hDAzTg\",\"UC6UJd2mLMk5pNT860EXiNbg\",\"UCOYmQvGUVP-oSSbmOV5LAtA\",\"UCL6HVxyI4kN1yAjs-mtOS0w\",\"UCCOOHFzlw29Tvel1FZ-e2Iw\",\"UCo6Jr3EhS31NLJDN8knYFoQ\",\"UCNs1NTwPCykp6yml1Fb7m1Q\",\"UCMrVQZkVXvi_nIs7QgxEeBw\",\"UCgs3NIhp-3P8ruhqfQsxjwQ\",\"UC9jfQlBoWGH2URoTnhkFEPg\",\"UCu9uL-Go4_zWFpcQmuR9glg\",\"UCRer8hNu4FaDzIb7Te275mg\",\"UCaau3tiGPzkTQXi9ukgirkA\",\"UCKuJXUcCNJqpK8BIPsawIQg\",\"UCtWucdHdhYVCd5xddP-kjhg\",\"UCX0T-Zvqle2QFb57_wEIkzQ\",\"UCSmqryETeDHdYEenRVhWWTA\",\"UCFFzLlnlq-Son9rtbrRc1QQ\",\"UCjEvG03POpjGsHtO0rppH2Q\",\"UCZr2mO0RfzRJaPebKnmwSBg\",\"UCRC3upGcj_decdPi7JXT7Bg\",\"UCHyi7ElHTTVfPYq5cp0QH3w\",\"UC0wj8Z0ypKzfKEzOD0zffFA\",\"UC4E8tK6k7wKVopGj8f7JRhA\",\"UC_Uv10ZCAPgsbTOOBzSKk1w\",\"UC5mK0-K-r3KET0kifn-mJMg\",\"UC4R0ahC8-PkHhwBM1ufILiQ\",\"UCGM914MzLXCWhEZ6HjpFazg\",\"UCC3I8z1l4ilY6fF3KveNUDA\",\"UCHcEp75daOBfy1UYtYgCLrg\",\"UC9QDps1MGtw_M_7UUeVpwqg\",\"UC9i26XUfeM2eUQ8vD3qXM_w\",\"UCgfqzdUU3Z0AVkWdT0BZYKg\",\"UCt5ej-XVXupdW7f-_sfkEOA\",\"UCHPeoyPH0kR2AjbS2z0uagg\",\"UCymm7kcY6DBiOV9A-7fcn_A\",\"UCa8mkR-bOkIxAt2Rs-ihIgg\",\"UCub8MvirDxMBs_GtkjgWT_w\",\"UCTgsvmB6heOo27SRwg3yBYA\",\"UCIwPnua0qHJWyW7g3VG1BQw\",\"UCtXWjt7GelTcrlaHVey00WQ\",\"UCfkDhlL4vSazeBvLhPBD4iw\",\"UCJH0omYeMgtn0PNrEup0Daw\",\"UCnPAOzaFnTJ428qhrCdEA4w\",\"UCCbckhCWD8aQ8cWvGAJ_McQ\",\"UCvK9RPGsoXyLNPAncpnBOnQ\",\"UCIX5uq1meeqhtKdBIFwHGWg\",\"UCtusoBT-QvxVocQefB960hQ\",\"UCUsmWw7ntficNN-ID8PzwTw\",\"UC2mrkyAWEn1KlupLqA3xRKQ\",\"UCJrFYHsJzuL-fM_GYbSlVpw\",\"UCzKAvuiJmJJrUscdbMC8JGQ\",\"UCTQU_fWSk508xi5AwBd0gwA\",\"UCA_f8sVju4KwsSZkOPpk4cw\",\"UC9PmLGbztiG9UqcY6A5jRIQ\",\"UCb9q6wJG2YHt9H6KF57aoxA\",\"UCySTAAqnhTxko3UjLVO7rBw\",\"UC1ti-5tIVA1i_BZCVHxXdhA\",\"UC2ZgCajcXXepvod3NYa3haA\",\"UCGz1GPVquYPqkd2cAVh0Y7g\",\"UCPd5hztQN8Xva7-kyCHA5cQ\",\"UCvNbTU5NSQ_K8cWfY9OmWsw\",\"UCqG25smPnLbI-q2I1V760DQ\",\"UCNmZGAtaHToBMh2drO_Tfyg\",\"UCyv5-qT_mIoluyi46V6g8zw\",\"UC4BU0csr7Z-uDgbQ6S0SrLg\",\"UCeFVsgSGit0nnf752Rz0zLw\",\"UCKqe_Tp2G0H886qvc_aCcTQ\",\"UCdtpq69gJaaElVadzvpZJKA\",\"UCZHTtc7vs--1OeNtKHTN8Fg\",\"UC9gZlFYbs3F2aGVOqaOp__g\",\"UC8Sk0TZowH49pNHwsrLWaUg\",\"UCMbi8katMCUd5JkJ3Rr0t_w\",\"UChm0nqGt-De2n_MvZu29qsg\",\"UCI_1W3QBpHyvwTjIAIPf9vg\",\"UCoBaIkh4HIbae1UafhEvSxg\",\"UCcmdF2XOVwEncKCXM-T62Nw\",\"UCHcvieOoP6Q8ZEy7zlv1mnw\",\"UCx7dahHxldk_aXSzbvXhuvg\",\"UCibdy8Mv0m9VeU2jQa0Twkw\",\"UCQFqJ0RrEjkVh5xcQYjCHSw\",\"UCW5UXClQG1BP076tGxzj9IQ\",\"UCiRckOQe5MsN3TZj3mLXzjQ\",\"UCB-pNH9fKaSyrAjvQFHmOAg\",\"UCGZOKcIr2pUcdCJ3CymSa6w\",\"UCu58w-hDVrlOPeonwnZ_7KA\",\"UCWcdeVTT4fH8JbLGx2Hbslg\",\"UCwHV2z240YQ7usXF_SMBG_w\",\"UCH8_hOSBPZ9OAoMbjozWnfw\",\"UCEXrTlatX-u3_OjorXz9dsA\",\"UCytbqw88vDLv9mm86JThIlw\",\"UClgOKLQ3prgb5E3B9gGl9Vw\",\"UCvQIEjVoo71P98isNyB-NDg\",\"UCPYUzh1Lc8o8PCLXsu7oFKA\",\"UC4DnbsO3KwQQk--aQOYkMKg\",\"UCjKAzfHjYSpyLQ-xpjTZHyA\",\"UCU_a1lat_aBnwcHrPQmV_eQ\",\"UCPd3JLVlmyeAGPJ33uznslA\",\"UC6h0H77lmq3JLUNSdV9WT8A\",\"UCofsRN7qjhqm0EzrTntEuUA\",\"UC-t7ubcDp003XCVUN-ZJZmA\",\"UCcrisHqLSdM4d9_CB260TYQ\",\"UCX8dXdLxlgBSKcOhb-ixuJg\",\"UC3G_PKfWNdOpYoUrjG4ndqA\",\"UCmtvZG7xSaQqxTmyN7YAxQA\",\"UCt6Ze5fsywZ_GV_gKULzyNA\",\"UCs__JVCJx6mWnnf1kKl7tYA\",\"UC7rihp_QzNyOP1Hr6JshUeQ\",\"UCeTrn95xSbranNJp1DX8GNw\",\"UCcg6jrkX8ZDs8UCaoe5_s3Q\",\"UCMBJPpcTkjEe4lqphTNqByA\",\"UCawttaqOFnPuWwA3TMK5POA\",\"UCefIbWAtYgGn62MVJET2zDg\",\"UCJDdkTwK4z1UyWxkpaSg7EQ\",\"UCLG5fUbAD9JkrIUPEe4HfnQ\",\"UCARu6TU-jEPZISboI3TEYZw\",\"UCbZVEZrHxMtZiZ3BHlA0ZwQ\",\"UCwE8A3tIug6OOdBCVu8Nn8g\",\"UCC-r6vnXtcwBYq0VxZYhoXg\",\"UChGFcMy5PwXpCE5CIQ27LaQ\",\"UC7wiVzNkRI5Iy-MeAXGo3sg\",\"UCEJIjSFQXAoQiI0J3NT6H0Q\",\"UCqmtDwfbfv0qmpvE-vCB5IA\",\"UCq5myZfvvkaA0vaLJIa7LEg\",\"UCf4Ez6ZNWZXFhgH-3eSZCjQ\",\"UC0uRZtdwC-coeRJmr_pjGCw\",\"UCKO6UXYl-qnNeCwHWfm-OUA\",\"UCyyRyyfQQBMZjIoODkmsBPA\",\"UC84191xa3xoisWKuCWv-M1w\",\"UCmSR10tBDvXc9EzN5m-6opA\",\"UC_CuzLd-WVXEZnhpY7X-f0A\",\"UC_UtHhSmzhDTThNaQ7dUwWg\",\"UCLr_RiyZ0e0Q_FdI4585zfg\",\"UCQQ6NJAgnvxFyOxhoREtGdw\",\"UCcZWBeH7xXgRJ2aGjTWQeeQ\",\"UC3hPiy5z6XCDOlHh8_5cjPg\",\"UCnRC2duJB9uLEuLtM9NEOyg\",\"UCSGmY-dtg4hEU-39-usTwAg\",\"UCMofbSPZC0YjevWhwr7WW8A\",\"UCIdbVsm3ETaMAMDHwu3NmPQ\",\"UC--kNBQpRNT9VPXaYWl74qw\",\"UC4JpdKzVCLfRYmPTQv5_3_w\",\"UCQJFkmOjtsJK0GhN7JTaC-w\",\"UC3hFi1JsWqG4ml7uFC-1f4g\",\"UC9s3Go6vwpI15Omeya3Ewvg\",\"UC8cWzi-D9X2pM1uydkHtWCQ\",\"UCGMfQiGp0uKvwzo8v4PbJcQ\",\"UCgxHcOl2hA1It6QOfOLyJLA\",\"UCXiCAlsSMe977vamW915HxA\",\"UCz1bWobLmLuiMeSbWNarImQ\",\"UCPBIdxEGfK3fiEKMo8HJwlg\",\"UCZJjXLZElAtbDImCbUBTTsw\",\"UCoFmsrXkQyIoIwT1Uzof-CA\",\"UCJD5DJs9z2f6ZYFtX0VqqxA\",\"UCNCR1tI98njF-wj30WP3ioA\",\"UCp3JfOII-BSbHqlijmUWg7A\",\"UCS_m93imAwd78rQLv3Xx_MA\",\"UCLuyn6cWMYzndSquTpbbDAQ\",\"UCmE0Yv6AtlTdK_5T4Hm_3MA\",\"UCUc9LI7MARn21aAXU6nHflA\",\"UCD3OkyKhY0UUn9zvauNAihw\",\"UC8uMi-fbbRYU5loLGqiWOxQ\",\"UCXljd9TCU039iA1WbwX9v5g\",\"UCA7_mbiTc4iUoMrRuA_8nKQ\",\"UCZ3Zyq3Dw4vKLTUhcdfB7kg\",\"UCqrBfjeLi74isroPj1sv7dw\",\"UCtAliiC19cwcnLGKIktVYAw\",\"UCqZbTUtvcUc9FQj0hHf8jSQ\",\"UCQ2V67_F91M1KGAyUEGkOAQ\",\"UCZnlzHQzZeFAfIWT8KvEDiw\",\"UC0A9obFzYwts48kS75aUjHw\",\"UC5d2DUZHVmvDaV0enBY4OPw\",\"UCE8ycUqipoRoZPVVSmkwmow\",\"UC64uVnKqTgJvLni4YVUYd3A\",\"UCMCoGd23kSx-eOvhzWi-FNg\",\"UCACZ5dVnqt4sHLwM_CxU6Fg\",\"UCyADVnsvBuOGLk96VagifAg\",\"UCvbfXJYCK4aPmKJfVF2Pg5g\",\"UCNZ7hdBD4CmGnhByKf8d9bw\"];\n// Channels from recent videos, minus everyone vetted before; YouTube takes 50 ids per lookup\nconst memory = $getWorkflowStaticData(\"global\");\nconst seen = new Set([...SEEN_CHANNELS, ...(memory.seenChannels ?? [])]);\n// Manual runs do not save the memory, so creators already approved in Attio count as seen too (no duplicates)\nfor (const it of $(\"Attio · approved per category\").all()) {\n  for (const p of it.json.data ?? []) {\n    const id = p.values?.creator_id?.[0]?.value ?? \"\";\n    if (id.startsWith(\"yt:\")) seen.add(id.slice(3));\n  }\n}\nconst searches = $(\"YouTube searches\").all();\nconst hits = {};\n$input.all().forEach((it, i) => {\n  for (const v of it.json.items ?? []) {\n    const id = v.snippet?.channelId;\n    if (!id || seen.has(id)) continue;\n    const h = (hits[id] = hits[id] ?? { queries: [], categories: [] });\n    const s = searches[i].json;\n    if (!h.queries.includes(s.q)) { h.queries.push(s.q); h.categories.push(s.category); }\n  }\n});\nconst ids = Object.keys(hits);\nconst chunks = [];\nfor (let k = 0; k < ids.length; k += 50) chunks.push({ json: { ids: ids.slice(k, k + 50).join(\",\"), hits } });\nreturn chunks.length ? chunks : [{ json: { skip: true, hits: {} } }];\n"
+      }
+    },
+    {
+      "name": "YouTube · channels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/channels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet,statistics,contentDetails"
+            },
+            {
+              "name": "id",
+              "value": "={{ $json.ids }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Cheap filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const MIN_SUBS = 2000;\nconst MAX_SUBS = 1000000;\nconst MAX_YT = 40;\n// Cheap filter before spending more quota: country, size and \"cortes\" (clip) channels\nconst memory = $getWorkflowStaticData(\"global\");\nconst seen = new Set(memory.seenChannels ?? []);\nconst hits = $(\"New channels\").first().json.hits ?? {};\nconst kept = [];\nfor (const it of $input.all()) {\n  for (const c of it.json.items ?? []) {\n    const subs = Number(c.statistics?.subscriberCount ?? 0);\n    const country = c.snippet?.country;\n    const ok = (!country || country === \"BR\") && !c.statistics?.hiddenSubscriberCount\n      && subs >= MIN_SUBS && subs <= MAX_SUBS && !/\\bcortes?\\b/i.test(c.snippet?.title ?? \"\");\n    if (!ok) { seen.add(c.id); continue; }\n    kept.push({\n      id: c.id, title: c.snippet.title, description: c.snippet.description ?? \"\", subscribers: subs,\n      link: c.snippet.customUrl ? \"https://www.youtube.com/\" + c.snippet.customUrl : \"https://www.youtube.com/channel/\" + c.id,\n      uploads: c.contentDetails?.relatedPlaylists?.uploads,\n      queries: hits[c.id]?.queries ?? [], categories: hits[c.id]?.categories ?? [],\n    });\n  }\n}\n// Channels past the cap are not marked as seen: they come back next week\nconst batch = kept.slice(0, MAX_YT);\nfor (const c of batch) seen.add(c.id);\nmemory.seenChannels = [...seen];\nreturn batch.length ? batch.map((c) => ({ json: c })) : [{ json: { skip: true } }];\n"
+      }
+    },
+    {
+      "name": "YouTube · last uploads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/playlistItems",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet,contentDetails"
+            },
+            {
+              "name": "maxResults",
+              "value": "10"
+            },
+            {
+              "name": "playlistId",
+              "value": "={{ $json.uploads }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Video ids",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((it) => ({ json: { ids: (it.json.items ?? []).map((x) => x.contentDetails?.videoId).filter(Boolean).join(\",\") } }));\n"
+      }
+    },
+    {
+      "name": "YouTube · video stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "statistics"
+            },
+            {
+              "name": "id",
+              "value": "={{ $json.ids }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "YouTube"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "YouTube candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "function notaEngajamento(viewsPorInscrito) {\n  const v = Number(viewsPorInscrito);\n  if (v >= 0.15) return 5;\n  if (v >= 0.07) return 4;\n  if (v >= 0.03) return 3;\n  if (v >= 0.01) return 2;\n  return 1;\n}\nfunction notaConsistencia(videos30d) {\n  const n = Number(videos30d);\n  if (n >= 8) return 5;\n  if (n >= 4) return 4;\n  if (n >= 2) return 3;\n  if (n >= 1) return 2;\n  return 1;\n}\n// Same signals as youtube_sourcing.mjs: last 10 videos, views per subscriber, cadence, links in the description\nconst DAY = 864e5;\nconst cut = (s, n) => Array.from(String(s ?? \"\")).slice(0, n).join(\"\");\nconst chans = $(\"Cheap filter\").all();\nconst uploads = $(\"YouTube · last uploads\").all();\nconst stats = $input.all();\nconst out = [];\nchans.forEach((it, i) => {\n  const c = it.json;\n  if (c.skip) return;\n  const pl = uploads[i]?.json?.items ?? [];\n  if (!pl.length) return;\n  const views = (stats[i]?.json?.items ?? []).map((v) => Number(v.statistics?.viewCount ?? 0));\n  const avg = views.length ? views.reduce((a, b) => a + b, 0) / views.length : 0;\n  const dates = pl.map((x) => x.contentDetails?.videoPublishedAt).filter(Boolean).sort();\n  const last = dates.at(-1);\n  const videos30 = dates.filter((d) => Date.now() - new Date(d).getTime() <= 30 * DAY).length;\n  const desc = c.description;\n  const instagram = desc.match(/instagram\\.com\\/[A-Za-z0-9_.]+/i)?.[0];\n  const linkedin = desc.match(/linkedin\\.com\\/in\\/[A-Za-z0-9_\\-%]+/i)?.[0];\n  const business = /[\\w.+-]+@[\\w-]+\\.[\\w.]+|parceria|publi|contato comercial|business|m[ií]dia ?kit/i.test(desc);\n  out.push({ json: {\n    platform: \"YouTube\",\n    creator_id: \"yt:\" + c.id,\n    name: c.title,\n    link: c.link,\n    audience: c.subscribers,\n    rate_card: c.subscribers < 100000 ? 500 : c.subscribers < 500000 ? 1500 : 3000,\n    gate30d: !!last && Date.now() - new Date(last).getTime() <= 30 * DAY,\n    objective: { engajamento: notaEngajamento(avg / c.subscribers), consistencia: notaConsistencia(videos30) },\n    state: {\n      canal: c.title,\n      descricao_do_canal: cut(desc, 600),\n      ultimos_videos: pl.map((x) => ({ titulo: x.snippet?.title, descricao: cut(x.snippet?.description, 150), data: (x.contentDetails?.videoPublishedAt ?? \"\").slice(0, 10) })),\n    },\n    content_summary: cut(desc.replace(/\\s+/g, \" \").trim(), 300) + \" | Recent videos: \" + pl.slice(0, 6).map((x) => cut(x.snippet?.title, 90)).join(\" / \"),\n    instagram: instagram ? \"https://www.\" + instagram : \"\",\n    linkedin: linkedin ? \"https://www.\" + linkedin : \"\",\n    contact_route: !!(instagram || linkedin || business),\n    queries: c.queries,\n  } });\n});\nreturn out.length ? out : [{ json: { skip: true } }];\n"
+      }
+    },
+    {
+      "name": "Substack searches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        320
+      ],
+      "parameters": {
+        "jsCode": "return $(\"Plan searches\").first().json.substack.map((s) => ({ json: s }));\n"
+      }
+    },
+    {
+      "name": "Substack · search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        320
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://substack.com/api/v1/top/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "name": "New publications",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const SEEN_PUBS = [\"jacssonsantosoficial\",\"starsxrafiz25\",\"henriquebagetti\",\"mulheresdeproduto\",\"enzobonomi\",\"patriciavogtt\",\"lucasnewss\",\"melfnds\",\"diegocbarreto\",\"fragmentosinfinito\",\"operacoesdenegocios\",\"vivendodeemail\",\"jonascastromp4\",\"paulanarvaez\",\"themikewiller\",\"byarthur\",\"ideiaspoderosas\",\"plinear\",\"tadeia\",\"productgurus\",\"renatavichi\",\"academicosanonimos\",\"investiga\",\"marsolia\",\"melomaah01\",\"tempodequalidade\",\"mallarme\",\"sschwartzman\",\"thepapayanews\",\"danieldahis\",\"bypedroneres\",\"engenhariaecia\",\"devnagringa\",\"dfolloni\",\"arthurmarquezdg\",\"eaipequi\",\"paulogala\",\"garotaslegaispensamdemais\",\"alesantosdn\",\"prompspravoce\",\"marcellexavier\",\"viviyouknowme\",\"thaliawz\",\"steffanylopes\",\"benwayoficial\",\"interney\",\"andregualtieri\",\"agapysjournal\",\"henriquecalandra\",\"microsaas\",\"virapagina\",\"viniciuscarneiro\",\"locainestable\",\"wesmeysilva\",\"meditacaoecafeina\",\"vendersemvender\",\"trentim\",\"anneliesericci\",\"mulheresprogramando\",\"leozeferino\",\"olharcriativo\",\"womakerscode\",\"elisaterumi\",\"lalai\",\"vanessaguedes\",\"vozesdaamerica\",\"giomangoni\",\"prescendo\",\"sergiotodoprosa\",\"rodrigocabral\",\"rampupb2b\",\"igortitancastroviejo\",\"victormignone\",\"lucasalbuquerquejs\",\"zaratips\",\"viumavaga\",\"codecon\",\"emanualcriativo\",\"themorningpill\",\"mariilivros\",\"oprisma\",\"nutrilucas\",\"naocontocalorias\",\"matosb\",\"esterhaha\",\"legallygirl\",\"marcioatalla\",\"amonews\",\"juppimentel\",\"amandapessoa\",\"laboratoriodoser\",\"furiaetradicao\",\"marianapbragana\",\"leitorps\",\"proj66\",\"poesiaamorosa\",\"pinhoco\",\"terezafilizola\",\"pedrocooke\",\"cristinacostaazedo\",\"thecosmopolitania\",\"inescarrieres\",\"nardinilu\",\"gutanaka\",\"sctsvels\",\"jhenyfer\",\"rodrigogurgel1\",\"helenavilela\",\"professorguilhermefreire\",\"paginacinco\",\"pablogibrin\",\"anarusche\",\"phsantos\",\"dosesdetiquira\",\"rafacappai\",\"rebeckaleal\",\"mfontoura\",\"gustavommoraes\",\"ricardoschweitzer\",\"independenciafinanceira\",\"robertomotta\",\"repertorioenem\",\"fonsecah\",\"opensador\",\"girlsupworld\",\"notasderodapee\",\"deforapradentro\",\"lfmiguel\",\"paulohenriquearantes\",\"clubedoetf\",\"infraresearch\",\"felipemiranda1985\",\"aftermarketfl\",\"eradeouro\",\"tatleituras\",\"neuroeconomia\",\"maturi\",\"adriellycorrea\",\"anapaularamos\",\"indistraivel\",\"emanuellabarros\",\"cartasdaoficina\",\"pritescaro\",\"danielaleluddak\",\"maturidades\",\"ninyque\",\"polianaluiza\",\"leobossan\",\"eddut\",\"digitalmaisleve\",\"manuelmanero\",\"solofirst\",\"nataliampompeu\",\"clariluworld\",\"packlead\",\"heitorsasaki\",\"semestrutura\",\"themindtrail\",\"3garciafernanda\",\"fullstackmkt\",\"nossaescola\",\"ninispiga\",\"thehumanplus\",\"yohannbtc\",\"fcjunior\",\"clubedosilncio\",\"gabrielytrindade\",\"ansiosaemelancolica\",\"brunnomagalhaes\",\"nerdstacker\",\"iatechnegroup\",\"cartasdopioneiro\",\"gabyyzenhaa\",\"newslenta\"];\nconst MAX_NL = 15;\n// Portuguese publications from Substack's public search, minus everyone vetted before\nconst memory = $getWorkflowStaticData(\"global\");\nconst seen = new Set([...SEEN_PUBS, ...(memory.seenPubs ?? [])]);\nfor (const it of $(\"Attio · approved per category\").all()) {\n  for (const p of it.json.data ?? []) {\n    const id = p.values?.creator_id?.[0]?.value ?? \"\";\n    if (id.startsWith(\"nl:\")) seen.add(id.slice(3));\n  }\n}\nconst searches = $(\"Substack searches\").all();\nconst pubs = {};\n// Diagnosis for the summary: Substack sometimes refuses calls from cloud servers (works from a home connection)\nconst diag = { searches: searches.length, responses: $input.all().length, status_codes: {}, publications_found: 0, in_portuguese: 0, new: 0, first_error: null };\n$input.all().forEach((it, i) => {\n  const status = it.json.statusCode ?? (it.json.error ? \"error\" : 200);\n  diag.status_codes[status] = (diag.status_codes[status] ?? 0) + 1;\n  const body = it.json.body ?? it.json;\n  if (status !== 200 && !diag.first_error) diag.first_error = String(typeof body === \"string\" ? body : JSON.stringify(it.json.error ?? body)).slice(0, 200);\n  for (const item of body?.items ?? []) {\n    const found = item.type === \"profileSearchResults\"\n      ? (item.results ?? []).map((r) => ({ pub: r.primaryPublication, handle: r.handle }))\n      : (item.context?.users ?? []).map((u) => ({ pub: u.primary_publication, handle: u.handle }));\n    for (const { pub, handle } of found) {\n      if (!pub?.subdomain) continue;\n      diag.publications_found++;\n      if (!/^pt/.test(pub.language ?? \"\")) continue;\n      diag.in_portuguese++;\n      if (seen.has(pub.subdomain)) continue;\n      const p = (pubs[pub.subdomain] = pubs[pub.subdomain] ?? {\n        sub: pub.subdomain, handle, name: pub.name, queries: [],\n        base: pub.custom_domain ? \"https://\" + pub.custom_domain : \"https://\" + pub.subdomain + \".substack.com\",\n      });\n      const q = searches[i]?.json?.q;\n      if (q && !p.queries.includes(q)) p.queries.push(q);\n    }\n  }\n});\nconst list = Object.values(pubs).slice(0, MAX_NL * 3);\ndiag.new = Object.keys(pubs).length;\nmemory.seenPubs = [...new Set([...(memory.seenPubs ?? []), ...list.map((p) => p.sub)])];\nreturn list.length ? list.map((p, k) => ({ json: k ? p : { ...p, diag } })) : [{ json: { skip: true, diag } }];\n"
+      }
+    },
+    {
+      "name": "Substack · author profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        320
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://substack.com/api/v1/user/{{ $json.handle }}/public_profile",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Subscriber filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const MIN_ASSINANTES = 1000;\nconst MAX_NL = 15;\n// \"5.9K+ subscribers\" → 5900; without an exact number, Substack's rough band\nconst BANDS = { \"Tens\": 10, \"Hundreds\": 100, \"Thousands\": 1000, \"Tens of thousands\": 10000, \"Hundreds of thousands\": 100000 };\nconst pubs = $(\"New publications\").all();\nconst out = [];\n$input.all().forEach((it, i) => {\n  const p = pubs[i]?.json;\n  if (!p || p.skip) return;\n  const prof = it.json ?? {};\n  const m = String(prof.subscriberCountString ?? \"\").match(/([\\d.,]+)\\s*([KM]?)\\+?\\s*subscriber/i);\n  const subs = m ? Math.round(parseFloat(m[1].replace(\",\", \"\")) * ({ K: 1e3, M: 1e6 }[m[2].toUpperCase()] ?? 1)) : BANDS[prof.rough_num_free_subscribers] ?? null;\n  if (subs !== null && subs < MIN_ASSINANTES) return;\n  out.push({ json: { ...p, author: prof.name ?? \"\", bio: Array.from(String(prof.bio ?? \"\")).slice(0, 500).join(\"\"), subscribers: subs,\n    subscribers_text: prof.subscriberCountString ?? prof.rough_num_free_subscribers ?? \"\" } });\n});\nreturn out.length ? out.slice(0, MAX_NL) : [{ json: { skip: true } }];\n"
+      }
+    },
+    {
+      "name": "Substack · recent posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        320
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.base }}/api/v1/archive",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sort",
+              "value": "new"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "name": "All new creators",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        640
+      ],
+      "parameters": {
+        "jsCode": "function notaEngajamentoNewsletter(reacoesPorMil) {\n  const v = Number(reacoesPorMil);\n  if (v >= 10) return 5;\n  if (v >= 5) return 4;\n  if (v >= 2) return 3;\n  if (v >= 0.5) return 2;\n  return 1;\n}\nfunction notaConsistencia(videos30d) {\n  const n = Number(videos30d);\n  if (n >= 8) return 5;\n  if (n >= 4) return 4;\n  if (n >= 2) return 3;\n  if (n >= 1) return 2;\n  return 1;\n}\nconst JEV_Q = {\"YouTube\":{\"pt_br\":{\"type\":\"noul\",\"instructions\":\"O conteúdo do canal é produzido em português do Brasil\"},\"e_creator\":{\"type\":\"noul\",\"instructions\":\"O canal pertence a uma pessoa ou dupla que cria o próprio conteúdo, e não a uma empresa, escola, veículo de imprensa ou instituição\"},\"apostas\":{\"type\":\"noul\",\"instructions\":\"O canal promove apostas, cassinos ou jogos de azar\"},\"dinheiro_facil\":{\"type\":\"noul\",\"instructions\":\"O canal promete dinheiro fácil, renda rápida ou ganhos garantidos\"},\"trading\":{\"type\":\"noul\",\"instructions\":\"O canal promove especulação, como day trade, sinais de compra e venda, apostas em criptomoedas ou promessas de ganho com investimentos. Educação financeira, finanças pessoais e análise de investimentos de longo prazo não contam\"},\"politica\":{\"type\":\"noul\",\"instructions\":\"O canal faz conteúdo de política partidária ou eleitoral com frequência\"},\"fit_passionfroot\":{\"type\":\"score\",\"instructions\":\"Uma marca B2B (software, ferramentas de trabalho, fintech ou edtech) pagaria para falar com o público deste canal? Para quem é o conteúdo\",\"criteria\":[\"Entretenimento, fofoca, humor, games ou estilo de vida\",\"Consumidores em geral: saúde, fitness, beleza, receitas, compras, dicas de banco, renda extra ou autoajuda genérica, sem foco em trabalho ou estudo\",\"Estudantes e profissionais em início de carreira, com estudos, produtividade e carreira; ou investidores pessoa física com análise\",\"Profissionais de uma área, como marketing, produto, design, vendas, dados, programação, finanças, RH, saúde, direito ou engenharia, e founders\",\"Quem decide a compra de software e serviços em empresas, como gestores, líderes, donos de negócio e executivos\"]},\"qualidade\":{\"type\":\"score\",\"instructions\":\"Quanto os vídeos recentes mostram domínio de um tema. Análise, método, entrevista e tutorial valem igual\",\"criteria\":[\"Títulos sensacionalistas ou clickbait, sem um tema concreto\",\"Reações, notícias ou listas genéricas, sem contribuição própria\",\"Opiniões e dicas gerais sobre o tema, sem método nem profundidade\",\"Conteúdo de especialista: explica um método, analisa casos ou dados, entrevista quem entende do tema ou ensina passo a passo\",\"Referência no tema: análises aprofundadas, método próprio, entrevistas de peso ou tutoriais completos, com domínio evidente do assunto\"]},\"prontidao_publi\":{\"type\":\"score\",\"instructions\":\"Que sinais o canal mostra de trabalhar com marcas\",\"criteria\":[\"Nenhum sinal de parceria com marcas nem de contato comercial\",\"Vende apenas produtos próprios, como cursos, mentorias ou comunidades\",\"Tem contato comercial, mídia kit ou se apresenta como creator, mas sem publis visíveis\",\"Vídeos recentes mencionam patrocínio, publi ou parceria com uma marca\",\"Faz publis com frequência, com marcas de qualquer setor\"]},\"fit_regional\":{\"type\":\"score\",\"instructions\":\"Para qual mercado o conteúdo é feito\",\"criteria\":[\"Outro idioma ou outro país\",\"Português, mas voltado a Portugal ou a outro mercado\",\"Português do Brasil, com temas genéricos e sem referência ao Brasil\",\"Português do Brasil, com exemplos e situações do dia a dia brasileiro\",\"Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local\"]},\"categoria\":{\"type\":\"choice\",\"instructions\":\"Qual é o tema principal do conteúdo deste creator\",\"criteria\":{\"Marketing & Design\":\"Marketing, vendas, growth, branding, social media, criação de conteúdo, design e UX\",\"Produtividade & Desenvolvimento pessoal\":\"Produtividade, organização, estudos, hábitos, leitura e desenvolvimento pessoal\",\"Tech & Negócios\":\"Programação, software, dados, produto, empreendedorismo, gestão, liderança e negócios\",\"IA\":\"Inteligência artificial: ferramentas, agentes e automações com IA\",\"Finanças & Investimentos\":\"Finanças pessoais, investimentos, economia, contabilidade e finanças de empresas\",\"Saúde\":\"Saúde, medicina, nutrição, saúde mental e exercícios\",\"Carreira\":\"Carreira, emprego, entrevistas, LinkedIn, RH e mercado de trabalho\",\"Outro\":\"Nenhuma das anteriores, como entretenimento, games, estilo de vida ou consumo\"}}},\"Newsletter\":{\"pt_br\":{\"type\":\"noul\",\"instructions\":\"As edições são escritas em português do Brasil\"},\"e_creator\":{\"type\":\"noul\",\"instructions\":\"A newsletter é escrita por uma pessoa ou dupla com voz própria, e não por uma empresa, escola, veículo de imprensa ou instituição\"},\"apostas\":{\"type\":\"noul\",\"instructions\":\"A newsletter promove apostas, cassinos ou jogos de azar\"},\"dinheiro_facil\":{\"type\":\"noul\",\"instructions\":\"A newsletter promete dinheiro fácil, renda rápida ou ganhos garantidos\"},\"trading\":{\"type\":\"noul\",\"instructions\":\"A newsletter promove especulação, como day trade, sinais de compra e venda, apostas em criptomoedas ou promessas de ganho com investimentos. Educação financeira, finanças pessoais e análise de investimentos de longo prazo não contam\"},\"politica\":{\"type\":\"noul\",\"instructions\":\"A newsletter faz conteúdo de política partidária ou eleitoral com frequência\"},\"fit_passionfroot\":{\"type\":\"score\",\"instructions\":\"Uma marca B2B (software, ferramentas de trabalho, fintech ou edtech) pagaria para falar com o público desta newsletter? Para quem é o conteúdo\",\"criteria\":[\"Entretenimento, fofoca, humor, games ou estilo de vida\",\"Consumidores em geral: saúde, fitness, beleza, receitas, compras, dicas de banco, renda extra ou autoajuda genérica, sem foco em trabalho ou estudo\",\"Estudantes e profissionais em início de carreira, com estudos, produtividade e carreira; ou investidores pessoa física com análise\",\"Profissionais de uma área, como marketing, produto, design, vendas, dados, programação, finanças, RH, saúde, direito ou engenharia, e founders\",\"Quem decide a compra de software e serviços em empresas, como gestores, líderes, donos de negócio e executivos\"]},\"qualidade\":{\"type\":\"score\",\"instructions\":\"Quanto as edições recentes mostram domínio de um tema. Análise, método, entrevista e passo a passo valem igual\",\"criteria\":[\"Diário pessoal, crônicas ou literatura, sem um tema de trabalho, dinheiro, saúde ou aprendizado\",\"Links ou notícias reunidos sem análise própria\",\"Reflexões e opiniões gerais sobre um tema\",\"Conteúdo de especialista: análises com dados, casos reais, entrevistas, um método explicado ou passo a passo\",\"Referência no tema: análises aprofundadas, método próprio ou entrevistas de peso, com domínio evidente do assunto\"]},\"prontidao_publi\":{\"type\":\"score\",\"instructions\":\"Que sinais a newsletter mostra de trabalhar com marcas\",\"criteria\":[\"Nenhum sinal de parceria com marcas nem de contato comercial\",\"Vende apenas assinatura paga ou produtos próprios, como cursos e mentorias\",\"Tem contato comercial, mídia kit ou se apresenta como creator, mas sem publis visíveis\",\"Edições recentes mencionam patrocínio, publi ou parceria com uma marca\",\"Faz publis com frequência, com marcas de qualquer setor\"]},\"fit_regional\":{\"type\":\"score\",\"instructions\":\"Para qual mercado o conteúdo é feito\",\"criteria\":[\"Outro idioma ou outro país\",\"Português, mas voltado a Portugal ou a outro mercado\",\"Português do Brasil, com temas genéricos e sem referência ao Brasil\",\"Português do Brasil, com exemplos e situações do dia a dia brasileiro\",\"Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local\"]},\"categoria\":{\"type\":\"choice\",\"instructions\":\"Qual é o tema principal do conteúdo deste creator\",\"criteria\":{\"Marketing & Design\":\"Marketing, vendas, growth, branding, social media, criação de conteúdo, design e UX\",\"Produtividade & Desenvolvimento pessoal\":\"Produtividade, organização, estudos, hábitos, leitura e desenvolvimento pessoal\",\"Tech & Negócios\":\"Programação, software, dados, produto, empreendedorismo, gestão, liderança e negócios\",\"IA\":\"Inteligência artificial: ferramentas, agentes e automações com IA\",\"Finanças & Investimentos\":\"Finanças pessoais, investimentos, economia, contabilidade e finanças de empresas\",\"Saúde\":\"Saúde, medicina, nutrição, saúde mental e exercícios\",\"Carreira\":\"Carreira, emprego, entrevistas, LinkedIn, RH e mercado de trabalho\",\"Outro\":\"Nenhuma das anteriores, como entretenimento, games, estilo de vida ou consumo\"}}}};\nconst CLAUDE_SYS = {\"YouTube\":\"You are the second evaluator in a blind double vetting of Brazilian YouTube creators for Passionfroot, a marketplace where B2B brands sponsor creators. Another evaluator scores the same data separately; you never see its answers.\\nUse only the evidence in the creator data. The rubric is in Portuguese, like the content.\\nGates (true or false):\\n- pt_br: O conteúdo do canal é produzido em português do Brasil\\n- e_creator: O canal pertence a uma pessoa ou dupla que cria o próprio conteúdo, e não a uma empresa, escola, veículo de imprensa ou instituição\\nRed flags (list every one that applies; an empty list means none):\\n- apostas: O canal promove apostas, cassinos ou jogos de azar\\n- dinheiro_facil: O canal promete dinheiro fácil, renda rápida ou ganhos garantidos\\n- trading: O canal promove especulação, como day trade, sinais de compra e venda, apostas em criptomoedas ou promessas de ganho com investimentos. Educação financeira, finanças pessoais e análise de investimentos de longo prazo não contam\\n- politica: O canal faz conteúdo de política partidária ou eleitoral com frequência\\nCriteria (integer from 1 to 5, the level number):\\n- fit_passionfroot: Uma marca B2B (software, ferramentas de trabalho, fintech ou edtech) pagaria para falar com o público deste canal? Para quem é o conteúdo. 1) Entretenimento, fofoca, humor, games ou estilo de vida 2) Consumidores em geral: saúde, fitness, beleza, receitas, compras, dicas de banco, renda extra ou autoajuda genérica, sem foco em trabalho ou estudo 3) Estudantes e profissionais em início de carreira, com estudos, produtividade e carreira; ou investidores pessoa física com análise 4) Profissionais de uma área, como marketing, produto, design, vendas, dados, programação, finanças, RH, saúde, direito ou engenharia, e founders 5) Quem decide a compra de software e serviços em empresas, como gestores, líderes, donos de negócio e executivos\\n- qualidade: Quanto os vídeos recentes mostram domínio de um tema. Análise, método, entrevista e tutorial valem igual. 1) Títulos sensacionalistas ou clickbait, sem um tema concreto 2) Reações, notícias ou listas genéricas, sem contribuição própria 3) Opiniões e dicas gerais sobre o tema, sem método nem profundidade 4) Conteúdo de especialista: explica um método, analisa casos ou dados, entrevista quem entende do tema ou ensina passo a passo 5) Referência no tema: análises aprofundadas, método próprio, entrevistas de peso ou tutoriais completos, com domínio evidente do assunto\\n- prontidao_publi: Que sinais o canal mostra de trabalhar com marcas. 1) Nenhum sinal de parceria com marcas nem de contato comercial 2) Vende apenas produtos próprios, como cursos, mentorias ou comunidades 3) Tem contato comercial, mídia kit ou se apresenta como creator, mas sem publis visíveis 4) Vídeos recentes mencionam patrocínio, publi ou parceria com uma marca 5) Faz publis com frequência, com marcas de qualquer setor\\n- fit_regional: Para qual mercado o conteúdo é feito. 1) Outro idioma ou outro país 2) Português, mas voltado a Portugal ou a outro mercado 3) Português do Brasil, com temas genéricos e sem referência ao Brasil 4) Português do Brasil, com exemplos e situações do dia a dia brasileiro 5) Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local\\ncategoria: the main topic, one of: Marketing & Design (Marketing, vendas, growth, branding, social media, criação de conteúdo, design e UX); Produtividade & Desenvolvimento pessoal (Produtividade, organização, estudos, hábitos, leitura e desenvolvimento pessoal); Tech & Negócios (Programação, software, dados, produto, empreendedorismo, gestão, liderança e negócios); IA (Inteligência artificial: ferramentas, agentes e automações com IA); Finanças & Investimentos (Finanças pessoais, investimentos, economia, contabilidade e finanças de empresas); Saúde (Saúde, medicina, nutrição, saúde mental e exercícios); Carreira (Carreira, emprego, entrevistas, LinkedIn, RH e mercado de trabalho); Outro (Nenhuma das anteriores, como entretenimento, games, estilo de vida ou consumo).\\nrationale: one or two sentences in English naming the evidence behind the fit and quality scores.\",\"Newsletter\":\"You are the second evaluator in a blind double vetting of Brazilian newsletter creators for Passionfroot, a marketplace where B2B brands sponsor creators. Another evaluator scores the same data separately; you never see its answers.\\nUse only the evidence in the creator data. The rubric is in Portuguese, like the content.\\nGates (true or false):\\n- pt_br: As edições são escritas em português do Brasil\\n- e_creator: A newsletter é escrita por uma pessoa ou dupla com voz própria, e não por uma empresa, escola, veículo de imprensa ou instituição\\nRed flags (list every one that applies; an empty list means none):\\n- apostas: A newsletter promove apostas, cassinos ou jogos de azar\\n- dinheiro_facil: A newsletter promete dinheiro fácil, renda rápida ou ganhos garantidos\\n- trading: A newsletter promove especulação, como day trade, sinais de compra e venda, apostas em criptomoedas ou promessas de ganho com investimentos. Educação financeira, finanças pessoais e análise de investimentos de longo prazo não contam\\n- politica: A newsletter faz conteúdo de política partidária ou eleitoral com frequência\\nCriteria (integer from 1 to 5, the level number):\\n- fit_passionfroot: Uma marca B2B (software, ferramentas de trabalho, fintech ou edtech) pagaria para falar com o público desta newsletter? Para quem é o conteúdo. 1) Entretenimento, fofoca, humor, games ou estilo de vida 2) Consumidores em geral: saúde, fitness, beleza, receitas, compras, dicas de banco, renda extra ou autoajuda genérica, sem foco em trabalho ou estudo 3) Estudantes e profissionais em início de carreira, com estudos, produtividade e carreira; ou investidores pessoa física com análise 4) Profissionais de uma área, como marketing, produto, design, vendas, dados, programação, finanças, RH, saúde, direito ou engenharia, e founders 5) Quem decide a compra de software e serviços em empresas, como gestores, líderes, donos de negócio e executivos\\n- qualidade: Quanto as edições recentes mostram domínio de um tema. Análise, método, entrevista e passo a passo valem igual. 1) Diário pessoal, crônicas ou literatura, sem um tema de trabalho, dinheiro, saúde ou aprendizado 2) Links ou notícias reunidos sem análise própria 3) Reflexões e opiniões gerais sobre um tema 4) Conteúdo de especialista: análises com dados, casos reais, entrevistas, um método explicado ou passo a passo 5) Referência no tema: análises aprofundadas, método próprio ou entrevistas de peso, com domínio evidente do assunto\\n- prontidao_publi: Que sinais a newsletter mostra de trabalhar com marcas. 1) Nenhum sinal de parceria com marcas nem de contato comercial 2) Vende apenas assinatura paga ou produtos próprios, como cursos e mentorias 3) Tem contato comercial, mídia kit ou se apresenta como creator, mas sem publis visíveis 4) Edições recentes mencionam patrocínio, publi ou parceria com uma marca 5) Faz publis com frequência, com marcas de qualquer setor\\n- fit_regional: Para qual mercado o conteúdo é feito. 1) Outro idioma ou outro país 2) Português, mas voltado a Portugal ou a outro mercado 3) Português do Brasil, com temas genéricos e sem referência ao Brasil 4) Português do Brasil, com exemplos e situações do dia a dia brasileiro 5) Voltado ao público brasileiro, com casos, empresas, profissões, produtos ou regras do Brasil, como Pix, INSS, impostos ou o mercado de trabalho local\\ncategoria: the main topic, one of: Marketing & Design (Marketing, vendas, growth, branding, social media, criação de conteúdo, design e UX); Produtividade & Desenvolvimento pessoal (Produtividade, organização, estudos, hábitos, leitura e desenvolvimento pessoal); Tech & Negócios (Programação, software, dados, produto, empreendedorismo, gestão, liderança e negócios); IA (Inteligência artificial: ferramentas, agentes e automações com IA); Finanças & Investimentos (Finanças pessoais, investimentos, economia, contabilidade e finanças de empresas); Saúde (Saúde, medicina, nutrição, saúde mental e exercícios); Carreira (Carreira, emprego, entrevistas, LinkedIn, RH e mercado de trabalho); Outro (Nenhuma das anteriores, como entretenimento, games, estilo de vida ou consumo).\\nrationale: one or two sentences in English naming the evidence behind the fit and quality scores.\"};\nconst CLAUDE_SCHEMA = {\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"pt_br\",\"e_creator\",\"red_flags\",\"fit_passionfroot\",\"qualidade\",\"prontidao_publi\",\"fit_regional\",\"categoria\",\"rationale\"],\"properties\":{\"pt_br\":{\"type\":\"boolean\"},\"e_creator\":{\"type\":\"boolean\"},\"red_flags\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"apostas\",\"dinheiro_facil\",\"trading\",\"politica\"]}},\"fit_passionfroot\":{\"type\":\"integer\"},\"qualidade\":{\"type\":\"integer\"},\"prontidao_publi\":{\"type\":\"integer\"},\"fit_regional\":{\"type\":\"integer\"},\"categoria\":{\"type\":\"string\",\"enum\":[\"Marketing & Design\",\"Produtividade & Desenvolvimento pessoal\",\"Tech & Negócios\",\"IA\",\"Finanças & Investimentos\",\"Saúde\",\"Carreira\",\"Outro\"]},\"rationale\":{\"type\":\"string\"}}};\n// YouTube and Substack candidates in one list, each with its Jev and Claude requests (same data for both)\nconst DAY = 864e5;\nconst cut = (s, n) => Array.from(String(s ?? \"\")).slice(0, n).join(\"\");\nconst clean = (o) => JSON.parse(JSON.stringify(o, (_, v) => (typeof v === \"string\" && typeof v.toWellFormed === \"function\" ? v.toWellFormed() : v)));\nconst youtube = $(\"YouTube candidates\").all().map((it) => it.json).filter((c) => !c.skip);\n// The archive endpoint returns a list, which n8n splits into one item per post: group them back by publication\nconst posts = {};\nfor (const it of $input.all()) {\n  if (!it.json?.post_date) continue;\n  const k = it.pairedItem?.item ?? 0;\n  (posts[k] = posts[k] ?? []).push(it.json);\n}\nconst newsletters = [];\n// Without the Substack branch (blocked on n8n Cloud) there is no \"Subscriber filter\" node to read\nlet pubs = [];\ntry { pubs = $(\"Subscriber filter\").all(); } catch { pubs = []; }\npubs.forEach((it, i) => {\n  const p = it.json;\n  const ps = (posts[i] ?? []).slice(0, 10);\n  if (p.skip || !ps.length) return;\n  const recent = ps.filter((x) => Date.now() - new Date(x.post_date).getTime() <= 30 * DAY).length;\n  const reactions = ps.reduce((s, x) => s + (x.reaction_count ?? 0), 0) / ps.length;\n  newsletters.push({\n    platform: \"Newsletter\",\n    creator_id: \"nl:\" + p.sub,\n    name: p.name,\n    person: p.author,\n    link: p.base,\n    audience: p.subscribers,\n    rate_card: 500,\n    gate30d: recent > 0,\n    objective: { engajamento: notaEngajamentoNewsletter(p.subscribers ? (1000 * reactions) / p.subscribers : 0), consistencia: notaConsistencia(recent) },\n    state: {\n      nome: p.name, autor: p.author, bio_autor: p.bio, assinantes: p.subscribers_text,\n      posts_recentes: ps.map((x) => ({ data: x.post_date?.slice(0, 10), titulo: x.title, subtitulo: cut(x.subtitle, 200), tipo: x.type,\n        so_pagantes: x.audience === \"only_paid\", trecho: cut(x.truncated_body_text ?? x.description, 400) })),\n    },\n    content_summary: cut(p.bio.replace(/\\s+/g, \" \").trim(), 200) + \" | Recent posts: \" + ps.slice(0, 6).map((x) => cut(x.title, 90)).join(\" / \"),\n    instagram: \"\", linkedin: \"\",\n    contact_route: true, // a newsletter author can always be reached by replying to the publication\n    queries: p.queries,\n  });\n});\n// A week with no new creators still goes on (one placeholder item) so the run ends with a summary\nif (!youtube.length && !newsletters.length) return [{ json: { nothing_to_vet: true } }];\nreturn [...youtube, ...newsletters].map((c) => ({ json: { ...c,\n  jev_request: clean({ state: c.state, model: \"jev-latest\", questions: JEV_Q[c.platform] }),\n  claude_request: clean({\n    model: \"claude-opus-5-5\",\n    max_tokens: 4000,\n    fallbacks: \"default\",\n    output_config: { effort: \"low\", format: { type: \"json_schema\", schema: CLAUDE_SCHEMA } },\n    system: CLAUDE_SYS[c.platform],\n    messages: [{ role: \"user\", content: \"Creator data (JSON):\\n\" + JSON.stringify(c.state) }],\n  }),\n} }));\n"
+      }
+    },
+    {
+      "name": "Jev · rubric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        640
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.typesafe.ai/v1/systemone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.jev_request) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Jev"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "name": "Claude · rubric",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        640
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2026-10-21"
+            },
+            {
+              "name": "anthropic-beta",
+              "value": "server-side-fallback-2026-07-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('All new creators').item.json.claude_request) }}",
+        "options": {
+          "timeout": 300000,
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Anthropic"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "name": "Compare Jev × Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        640
+      ],
+      "parameters": {
+        "jsCode": "const KEYS = [\"fit_passionfroot\",\"qualidade\",\"prontidao_publi\",\"fit_regional\"];\nconst RED_KEYS = [\"apostas\",\"dinheiro_facil\",\"trading\",\"politica\"];\nconst PESOS = {\"fit_passionfroot\":30,\"qualidade\":20,\"prontidao_publi\":10,\"fit_regional\":10,\"engajamento\":15,\"consistencia\":15};\nconst PESADOS = [\"fit_passionfroot\",\"qualidade\"];\nconst APROVACAO_MINIMA = 60;\nconst FIT_MINIMO = 2.5;\nconst CATEGORIAS_EN = {\"Marketing & Design\":\"Marketing & Design\",\"Produtividade & Desenvolvimento pessoal\":\"Productivity & Personal Development\",\"Tech & Negócios\":\"Tech & Business\",\"IA\":\"AI\",\"Finanças & Investimentos\":\"Finance & Investing\",\"Saúde\":\"Health\",\"Carreira\":\"Career\",\"Outro\":\"Other\"};\n// Same rules as compare_vetting.mjs: gates, 60 cut-off, minimum fit 2.5, disputes, tie-break by the average\nconst cands = $(\"All new creators\").all();\nconst jevs = $(\"Jev · rubric\").all();\nconst final = (n) => Math.round(Object.entries(n).reduce((s, [k, v]) => s + PESOS[k] * v, 0) / 5);\nconst noEmpty = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== \"\" && !Number.isNaN(v)));\nconst batch = \"w3_\" + new Date().toISOString().slice(0, 10);\nconst stats = { evaluated: 0, approved: 0, disputes: 0, rejected: 0, failed: 0, jev_errors: 0, claude_errors: 0, first_error: null, results: [] };\nconst falha = (cand, quem, detalhe) => {\n  stats.failed++;\n  stats[quem === \"Jev\" ? \"jev_errors\" : \"claude_errors\"]++;\n  const msg = quem + \" · \" + cand.name + \": \" + String(typeof detalhe === \"string\" ? detalhe : JSON.stringify(detalhe)).slice(0, 300);\n  stats.first_error = stats.first_error ?? msg;\n  stats.results.push({ name: cand.name, platform: cand.platform, verdict: \"Failed\", detail: msg });\n};\nconst out = [];\n$input.all().forEach((it, i) => {\n  const cand = cands[i].json;\n  if (cand.nothing_to_vet) return;\n  const a = jevs[i]?.json?.answers;\n  const text = it.json?.content?.find?.((b) => b.type === \"text\")?.text;\n  if (!a) return falha(cand, \"Jev\", jevs[i]?.json?.error ?? jevs[i]?.json);\n  if (!text || it.json.stop_reason === \"refusal\") return falha(cand, \"Claude\", it.json?.error ?? it.json?.stop_reason ?? it.json);\n  let c;\n  try { c = JSON.parse(text); } catch { return falha(cand, \"Claude\", \"answer is not JSON\"); }\n  if (!a.pt_br || !a.e_creator || KEYS.some((k) => !a[k])) return falha(cand, \"Jev\", \"incomplete answers: \" + Object.keys(a).join(\", \"));\n  const jev = {\n    pt_br: a.pt_br.noul >= 0.5, e_creator: a.e_creator.noul >= 0.5,\n    flags: RED_KEYS.filter((k) => a[k].noul >= 0.5),\n    notas: Object.fromEntries(KEYS.map((k) => [k, +(a[k].score + 1).toFixed(2)])),\n    conf: Math.min(...PESADOS.map((k) => a[k].confidence)),\n  };\n  const claude = { pt_br: c.pt_br, e_creator: c.e_creator, flags: c.red_flags, notas: Object.fromEntries(KEYS.map((k) => [k, c[k]])) };\n  for (const v of [jev, claude]) {\n    v.notas = { ...v.notas, ...cand.objective };\n    v.nota = final(v.notas);\n    v.aprovado = v.pt_br && v.e_creator && !v.flags.length && cand.gate30d && v.nota >= APROVACAO_MINIMA && v.notas.fit_passionfroot >= FIT_MINIMO;\n  }\n  const reasons = [];\n  if (jev.aprovado !== claude.aprovado) reasons.push(\"different verdicts\");\n  if (!jev.flags.length !== !claude.flags.length) reasons.push(\"red flag mismatch (Jev: \" + (jev.flags.join(\", \") || \"none\") + \"; Claude: \" + (claude.flags.join(\", \") || \"none\") + \")\");\n  if (jev.e_creator !== claude.e_creator) reasons.push(\"disagree on whether it is a creator or a company\");\n  for (const k of PESADOS) if (Math.abs(jev.notas[k] - claude.notas[k]) >= 2) reasons.push(k + \": Jev \" + jev.notas[k] + \" vs Claude \" + claude.notas[k]);\n  const avg = Math.round((jev.nota + claude.nota) / 2);\n  if (jev.conf < 0.3 && Math.abs(avg - APROVACAO_MINIMA) <= 5) reasons.push(\"low Jev confidence (\" + jev.conf.toFixed(2) + \") near the cut-off\");\n  // Rule A: a split that is only about the score is settled by the average. Rule B: minimum fit is a gate.\n  const byAverage = reasons.length > 0 && reasons.every((m) => m === \"different verdicts\" || m.startsWith(\"low Jev confidence\"));\n  const dispute = !byAverage && reasons.length > 0;\n  const approved = byAverage\n    ? avg >= APROVACAO_MINIMA && (jev.notas.fit_passionfroot + claude.notas.fit_passionfroot) / 2 >= FIT_MINIMO\n    : jev.aprovado;\n  const verdict = dispute ? \"Dispute\" : approved ? \"Approved\" : \"Rejected\";\n  stats.evaluated++;\n  stats[{ Dispute: \"disputes\", Approved: \"approved\", Rejected: \"rejected\" }[verdict]]++;\n  stats.results.push({ name: cand.name, platform: cand.platform, verdict, jev: jev.nota, claude: claude.nota,\n    fit: \"Jev \" + jev.notas.fit_passionfroot + \" / Claude \" + claude.notas.fit_passionfroot, gate_30_days: cand.gate30d,\n    why: dispute ? reasons.join(\"; \") : c.rationale });\n  if (verdict === \"Rejected\") return;\n  out.push({ json: {\n    stage: verdict === \"Dispute\" ? \"Sourced\" : \"Vetted\",\n    ready: verdict === \"Approved\" && cand.contact_route,\n    person: { data: { values: noEmpty({\n      name: [{ first_name: \"\", last_name: \"\", full_name: cand.person || cand.name }],\n      description: cand.platform === \"Newsletter\" ? cand.name : null,\n      creator_id: cand.creator_id,\n      platform: cand.platform,\n      main_link: cand.link,\n      passionfroot_category: CATEGORIAS_EN[c.categoria] ?? null,\n      audience: cand.audience,\n      final_score: avg,\n      passionfroot_fit: claude.notas.fit_passionfroot,\n      verdict,\n      decided_by: dispute ? null : byAverage ? \"Jev + Claude average\" : \"Jev + Claude agree\",\n      rate_card_usd: cand.rate_card,\n      vetting_rationale: c.rationale,\n      dispute_reason: dispute ? reasons.join(\"; \") : null,\n      batch,\n      content_summary: cand.content_summary,\n      instagram: cand.instagram,\n      linkedin: cand.linkedin,\n    }) } },\n  } });\n});\nout.forEach((o) => { o.json.stats = stats; });\n// Nothing to store still sends the stats on, so the run always ends with a summary\nreturn out.length ? out : [{ json: { nothing_to_store: true, stats } }];\n"
+      }
+    },
+    {
+      "name": "Anything to store?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        770,
+        840
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.nothing_to_store === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Attio · create creator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        640
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/people/records",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.person) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Pipeline entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        640
+      ],
+      "parameters": {
+        "jsCode": "// Approved → Vetted, disputes → Sourced (a human decides in Attio)\nconst comps = $(\"Compare Jev × Claude\").all();\nreturn $input.all().map((it, i) => {\n  const rid = it.json.data?.id?.record_id;\n  const c = comps[i].json;\n  const v = c.person.data.values;\n  return { json: { record_id: rid, ready: c.ready, name: v.name[0].full_name, stage: c.stage,\n    platform: v.platform, link: v.main_link, dispute_reason: v.dispute_reason,\n    request: rid ? { data: { parent_record_id: rid, parent_object: \"people\", entry_values: { stage: c.stage } } } : null } };\n}).filter((x) => x.json.request);\n"
+      }
+    },
+    {
+      "name": "Attio · add to pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        640
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/lists/supply_pipeline/entries",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Clay · enrich (paid plan)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3100,
+        640
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.clay.com/v3/sources/webhook/REPLACE_WITH_CLAY_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ attio_record_id: $('Pipeline entry').item.json.record_id, name: $('Pipeline entry').item.json.name }) }}",
+        "options": {}
+      },
+      "disabled": true
+    },
+    {
+      "name": "Contact route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3320,
+        640
+      ],
+      "parameters": {
+        "jsCode": "// Stand-in for the Clay enrich on the free plan: a creator with a LinkedIn, Instagram or business contact\n// in their own channel (or any newsletter author) is ready for outreach\nconst entries = $(\"Pipeline entry\").all();\nreturn $(\"Attio · add to pipeline\").all()\n  .map((it, i) => ({ ready: entries[i]?.json?.ready, entry_id: it.json.data?.id?.entry_id }))\n  .filter((x) => x.ready && x.entry_id)\n  .map((x) => ({ json: x }));\n"
+      }
+    },
+    {
+      "name": "Attio · ready for outreach",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3540,
+        640
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.attio.com/v2/lists/supply_pipeline/entries/{{ $json.entry_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"data\":{\"entry_values\":{\"stage\":\"Ready for outreach\"}}}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Review tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        440
+      ],
+      "parameters": {
+        "jsCode": "const REVIEWER = \"9fbc6ada-b757-46cc-923f-6e940271cdb6\";\n// Every dispute becomes a task for the reviewer, linked to the creator, due in 3 days\nreturn $(\"Pipeline entry\").all().filter((it) => it.json.stage === \"Sourced\").map((it) => ({ json: { request: { data: {\n  content: \"Decide: \" + it.json.name + \" (\" + it.json.platform + \") · \" + it.json.dispute_reason + \". Open the record, check \" + it.json.link\n    + \" and set Verdict to Approved (stage Vetted) or Rejected (stage Rejected, with a reason).\",\n  format: \"plaintext\",\n  deadline_at: new Date(Date.now() + 3 * 864e5).toISOString(),\n  is_completed: false,\n  linked_records: [{ target_object: \"people\", target_record_id: it.json.record_id }],\n  assignees: [{ referenced_actor_type: \"workspace-member\", referenced_actor_id: REVIEWER }],\n} } } }));\n"
+      }
+    },
+    {
+      "name": "Attio · review task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        440
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/tasks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Attio"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Run summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        840
+      ],
+      "parameters": {
+        "jsCode": "const SUBSTACK = true;\nconst s = $(\"Compare Jev × Claude\").first().json.stats;\nconst plan = $(\"Plan searches\").first().json;\nreturn [{ json: {\n  thinnest_categories: plan.thin,\n  youtube_searches: plan.youtube.map((x) => x.q),\n  substack_searches: SUBSTACK ? plan.substack.map((x) => x.q) : \"not run in n8n: Substack blocks cloud servers, newsletters run from the local scripts\",\n  new_creators_vetted: s.evaluated,\n  approved: s.approved,\n  disputes_for_review: s.disputes,\n  rejected: s.rejected,\n  failed_evaluations: s.failed,\n  jev_errors: s.jev_errors,\n  claude_errors: s.claude_errors,\n  first_error: s.first_error,\n  ready_for_outreach: $(\"Compare Jev × Claude\").all().filter((x) => x.json.ready).length,\n  review_tasks_created: tentar(() => $(\"Pipeline entry\").all().filter((x) => x.json.stage === \"Sourced\").length, 0),\n  ...(SUBSTACK ? { substack: tentar(() => $(\"New publications\").first().json.diag, \"no diagnosis\") } : {}),\n  creators: s.results,\n} }];\n// A node that did not run in this execution throws when referenced (e.g. nothing to store)\nfunction tentar(f, padrao) { try { return f() ?? padrao; } catch { return padrao; } }\n"
+      }
+    }
+  ],
+  "connections": {
+    "Every Monday": {
+      "main": [
+        [
+          {
+            "node": "Categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categories": {
+      "main": [
+        [
+          {
+            "node": "Attio · approved per category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · approved per category": {
+      "main": [
+        [
+          {
+            "node": "Plan searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan searches": {
+      "main": [
+        [
+          {
+            "node": "YouTube searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube searches": {
+      "main": [
+        [
+          {
+            "node": "YouTube · search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · search": {
+      "main": [
+        [
+          {
+            "node": "New channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New channels": {
+      "main": [
+        [
+          {
+            "node": "YouTube · channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · channels": {
+      "main": [
+        [
+          {
+            "node": "Cheap filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cheap filter": {
+      "main": [
+        [
+          {
+            "node": "YouTube · last uploads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · last uploads": {
+      "main": [
+        [
+          {
+            "node": "Video ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video ids": {
+      "main": [
+        [
+          {
+            "node": "YouTube · video stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · video stats": {
+      "main": [
+        [
+          {
+            "node": "YouTube candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube candidates": {
+      "main": [
+        [
+          {
+            "node": "Substack searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Substack searches": {
+      "main": [
+        [
+          {
+            "node": "Substack · search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Substack · search": {
+      "main": [
+        [
+          {
+            "node": "New publications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New publications": {
+      "main": [
+        [
+          {
+            "node": "Substack · author profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Substack · author profile": {
+      "main": [
+        [
+          {
+            "node": "Subscriber filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscriber filter": {
+      "main": [
+        [
+          {
+            "node": "Substack · recent posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Substack · recent posts": {
+      "main": [
+        [
+          {
+            "node": "All new creators",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All new creators": {
+      "main": [
+        [
+          {
+            "node": "Jev · rubric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jev · rubric": {
+      "main": [
+        [
+          {
+            "node": "Claude · rubric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude · rubric": {
+      "main": [
+        [
+          {
+            "node": "Compare Jev × Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare Jev × Claude": {
+      "main": [
+        [
+          {
+            "node": "Anything to store?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · create creator": {
+      "main": [
+        [
+          {
+            "node": "Pipeline entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline entry": {
+      "main": [
+        [
+          {
+            "node": "Attio · add to pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attio · add to pipeline": {
+      "main": [
+        [
+          {
+            "node": "Clay · enrich (paid plan)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Run summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Review tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clay · enrich (paid plan)": {
+      "main": [
+        [
+          {
+            "node": "Contact route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact route": {
+      "main": [
+        [
+          {
+            "node": "Attio · ready for outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review tasks": {
+      "main": [
+        [
+          {
+            "node": "Attio · review task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to store?": {
+      "main": [
+        [
+          {
+            "node": "Attio · create creator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  }
+}
