@@ -6,8 +6,10 @@
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const PORTFOLIO = "C:/Users/miche/projetos/portfolio/";
+// O portfólio fica ao lado deste projeto (../portfolio)
+const PORTFOLIO = fileURLToPath(new URL("../../portfolio/", import.meta.url)).split("\\").join("/");
 const PAGINA = PORTFOLIO + "creators.html";
 const N8N = new URL("../n8n/", import.meta.url);
 const snap = JSON.parse(readFileSync(new URL("../data/case_snapshot.json", import.meta.url), "utf8"));

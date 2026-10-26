@@ -85,7 +85,8 @@ for (const ids of chunk([...hits.keys()], 50)) {
 const candidates = channels.filter((c) => {
   const subs = Number(c.statistics.subscriberCount ?? 0);
   const country = c.snippet.country;
-  return (!country || country === "BR")
+  // País do mercado do lote (até 24/10 estava fixo em BR e cortou os canais americanos com país preenchido nos lotes us1 e us2)
+  return (!country || country === MERCADOS[MERCADO].youtube.regionCode)
     && !c.statistics.hiddenSubscriberCount
     && subs >= MIN_SUBS && subs <= MAX_SUBS
     && !/\bcortes?\b/i.test(c.snippet.title);

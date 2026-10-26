@@ -77,9 +77,12 @@ async function todos(path) {
   }
 }
 const porCreatorId = new Map();
+// Rejeitados à mão no Attio (decisão do Michel, ex.: personas sintéticas em 26/10) não voltam a Approved
+const rejeitadosNoAttio = new Set();
 for (const p of await todos("objects/people/records/query")) {
   const id = p.values.creator_id?.[0]?.value;
   if (id) porCreatorId.set(id, p.id.record_id);
+  if (id && p.values.verdict?.[0]?.option?.title === "Rejected") rejeitadosNoAttio.add(id);
 }
 const naLista = new Set((await todos("lists/supply_pipeline/entries/query")).map((e) => e.parent_record_id));
 
@@ -114,6 +117,7 @@ let criados = 0, atualizados = 0, entradas = 0, falhas = 0;
 for (let i = 0; i < alvo.length; i += 5) {
   await Promise.all(alvo.slice(i, i + 5).map(async (c) => {
     try {
+      if (rejeitadosNoAttio.has(c.id)) return;
       let recordId = porCreatorId.get(c.id);
       if (recordId) {
         await attio("PATCH", `objects/people/records/${recordId}`, { data: { values: valores(c) } });

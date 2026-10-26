@@ -2,11 +2,11 @@
 // Executor local do W3: roda os nós na ordem das conexões, com o YouTube e o Claude simulados (sem gastar quota nem chave)
 // e Substack, Jev e Attio de verdade. No fim apaga tudo que criou no Attio.
 import { readFileSync } from "node:fs";
-import { attio } from "file:///C:/Users/miche/projetos/Clay/scripts/attio_api.mjs";
+import { attio } from "./attio_api.mjs";
 
-const env = readFileSync("C:/Users/miche/projetos/Clay/.env", "utf8");
+const env = readFileSync(new URL("../.env", import.meta.url), "utf8");
 const JEV_KEY = env.match(/^TYPESAFE_API_KEY=(.+)$/m)[1].trim();
-const w = JSON.parse(readFileSync("C:/Users/miche/projetos/Clay/n8n/w3_weekly_supply.json", "utf8"));
+const w = JSON.parse(readFileSync(new URL("../n8n/w3_weekly_supply.json", import.meta.url), "utf8"));
 const node = (n) => w.nodes.find((x) => x.name === n);
 const out = {};
 const memoria = {};
@@ -18,7 +18,7 @@ for (let n = "Every Monday"; n; n = w.connections[n]?.main[0]?.[0]?.node) ordem.
 ordem.push("Run summary");
 
 // Fixtures do YouTube a partir de um canal real do lote 5, com ids falsos (não colidem com quem já foi visto)
-const estados = JSON.parse(readFileSync("C:/Users/miche/projetos/Clay/data/youtube_lote5_states.json", "utf8"));
+const estados = JSON.parse(readFileSync(new URL("../data/youtube_lote5_states.json", import.meta.url), "utf8"));
 const [, exemplo] = Object.entries(estados)[3];
 const hoje = new Date().toISOString();
 const ytFake = {

@@ -2,7 +2,7 @@
 // Procura texto visível que continua em português quando a página abre em inglês (?lang=en):
 // texto fora de qualquer elemento com data-en é mostrado como está.
 const fs = require("fs");
-const html = fs.readFileSync("C:/Users/miche/projetos/portfolio/creators.html", "utf8")
+const html = fs.readFileSync(require("path").join(__dirname, "..", "..", "portfolio", "creators.html"), "utf8")
   .replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "").replace(/<svg[\s\S]*?<\/svg>/g, "");
 const VAZIOS = new Set(["br", "img", "meta", "link", "input", "hr", "source", "path", "rect", "line", "circle", "polygon"]);
 const pilha = [];

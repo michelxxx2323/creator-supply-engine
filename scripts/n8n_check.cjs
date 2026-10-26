@@ -2,7 +2,7 @@
 // Checagem estática dos workflows gerados: conexões, sintaxe dos nós de código e referências $('Nó')
 const fs = require("fs");
 for (const f of ["w1_brief_shortlist.json", "w2_outreach_sync.json", "w3_weekly_supply.json"]) {
-  const w = JSON.parse(fs.readFileSync("C:/Users/miche/projetos/Clay/n8n/" + f, "utf8"));
+  const w = JSON.parse(fs.readFileSync(require("path").join(__dirname, "..", "n8n", f), "utf8"));
   const names = new Set(w.nodes.map((n) => n.name));
   const broken = Object.entries(w.connections).flatMap(([a, c]) => [a, ...c.main.flat().map((x) => x.node)]).filter((n) => !names.has(n));
   const syntax = [];
