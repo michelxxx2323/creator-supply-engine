@@ -664,15 +664,16 @@ const w3 = {
 // Funções dos nós de código do W3
 function w3Categorias() {
   // Every run covers both markets, Brazil and the United States (edit RUN_MARKETS to run only one)
-  // One Attio query per market and Passionfroot category, to count approved creators
+  // One Attio query per market and Passionfroot category, with every verdict: approved creators set the counts,
+  // and everyone already in Attio (disputes and rejections too) counts as seen
   return RUN_MARKETS.flatMap((market) => CATEGORIES.map((category) => ({ json: { category, market, query: { limit: 500,
-    filter: { verdict: "Approved", passionfroot_category: category, market: MARKETS[market].name } } } })));
+    filter: { passionfroot_category: category, market: MARKETS[market].name } } } })));
 }
 
 function w3Plano() {
   // In each market, thinnest categories first; searches rotate every week so each run looks somewhere new
   const cats = $("Categories").all();
-  const counts = $input.all().map((it, i) => ({ market: cats[i].json.market, category: cats[i].json.category, approved: it.json.data?.length ?? 0 }));
+  const counts = $input.all().map((it, i) => ({ market: cats[i].json.market, category: cats[i].json.category, approved: (it.json.data ?? []).filter((p) => p.values?.verdict?.[0]?.option?.title === "Approved").length }));
   const week = Math.floor(Date.now() / (7 * 864e5));
   const pick = (list, n, offset) => Array.from({ length: Math.min(n, list.length) }, (_, k) => list[(week * n + k + offset) % list.length]);
   const publishedAfter = new Date(Date.now() - 90 * 864e5).toISOString();
@@ -694,7 +695,7 @@ function w3NovosCanais() {
   // Channels from recent videos, minus everyone vetted before; YouTube takes 50 ids per lookup
   const memory = $getWorkflowStaticData("global");
   const seen = new Set([...SEEN_CHANNELS, ...(memory.seenChannels ?? [])]);
-  // Manual runs do not save the memory, so creators already approved in Attio count as seen too (no duplicates)
+  // Manual runs do not save the memory, so creators already in Attio count as seen too, disputes included (no duplicates)
   for (const it of $("Attio · approved per category").all()) {
     for (const p of it.json.data ?? []) {
       const id = p.values?.creator_id?.[0]?.value ?? "";

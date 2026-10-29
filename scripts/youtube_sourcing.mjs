@@ -26,14 +26,18 @@ const RECENT_DAYS = 30;
 
 let unitsUsed = 0;
 
+// Erro temporário do YouTube (5xx ou rede) tenta de novo até 3 vezes; quota esgotada ou pedido inválido sobe na hora
 async function yt(endpoint, params, cost) {
   const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
   for (const [k, v] of Object.entries({ ...params, key: KEY })) url.searchParams.set(k, v);
-  const res = await fetch(url);
-  const json = await res.json();
-  unitsUsed += cost;
-  if (json.error) throw new Error(`${endpoint}: ${json.error.code} ${json.error.message}`);
-  return json;
+  for (let tentativa = 1; ; tentativa++) {
+    const json = await fetch(url).then((r) => r.json()).catch((e) => ({ error: { code: "rede", message: e.message } }));
+    unitsUsed += cost;
+    const temporario = json.error && (json.error.code === "rede" || json.error.code >= 500);
+    if (temporario && tentativa < 3) { await new Promise((r) => setTimeout(r, 2000 * tentativa)); continue; }
+    if (json.error) throw new Error(`${endpoint}: ${json.error.code} ${json.error.message}`);
+    return json;
+  }
 }
 
 // Corta por caractere, não por unidade UTF-16, para não partir emojis ao meio
@@ -48,11 +52,19 @@ for (const q of queries) {
   let pageToken;
   let videos = 0;
   for (let page = 0; page < PAGES; page++) {
-    const res = await yt("search", {
-      part: "snippet", type: "video", q, maxResults: 50,
-      ...MERCADOS[MERCADO].youtube, publishedAfter,
-      ...(pageToken ? { pageToken } : {}),
-    }, 100);
+    // Uma busca que falha não derruba o lote; quota esgotada para tudo (as próximas falhariam igual)
+    let res;
+    try {
+      res = await yt("search", {
+        part: "snippet", type: "video", q, maxResults: 50,
+        ...MERCADOS[MERCADO].youtube, publishedAfter,
+        ...(pageToken ? { pageToken } : {}),
+      }, 100);
+    } catch (e) {
+      if (/quota/i.test(e.message)) throw e;
+      console.error(`"${q}": falhou (${e.message.slice(0, 120)}), segue para a próxima`);
+      break;
+    }
     for (const item of res.items) {
       const id = item.snippet.channelId;
       if (!hits.has(id)) hits.set(id, new Set());
